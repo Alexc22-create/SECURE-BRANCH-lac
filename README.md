@@ -5,7 +5,7 @@ Herramienta GUI para configurar switches Cisco IOS 15.x / IOSvL2 de forma masiva
 ## Estructura del proyecto
 
 ```
-switch_configurator/
+SECURE-BRANCH-lac/
 │
 ├── app.py                  # Punto de entrada + clase principal (SwitchConfiguratorV2)
 ├── constants.py            # Colores, versión, UPLINK_IFACE, DSCP_PRESETS
