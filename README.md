@@ -34,7 +34,7 @@ SECURE-BRANCH-lac/
 ## Cómo ejecutar
 
 ```bash
-cd switch_configurator
+cd SECURE-BRANCH-lac
 source env/bin/activate          # activar entorno virtual
 python app.py
 ```
