@@ -7,9 +7,11 @@ en listas de comandos IOS listos para enviarse al switch.
 No depende de tkinter; es pura lógica de negocio.
 Esto facilita probar la generación de comandos sin abrir la interfaz gráfica.
 """
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# (en core/ y ui/ sube un nivel con dirname() adicional)
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 import re
 from constants import UPLINK_IFACE
 
@@ -61,6 +63,13 @@ def build_commands(
     pol_entries: list,
     pol_name: str,
     service_policies: list,
+    # ── Nuevos parámetros v2.2 ────────────────────────────────────────────────
+    enable_pw: str          = "",    # enable secret (MD5 type-5)
+    login_attempts: str     = "",    # máx intentos fallidos antes de bloquear
+    login_window: str       = "",    # ventana en seg para contar intentos
+    login_block_for: str    = "",    # seg de bloqueo al superar intentos
+    banner_text: str        = "",    # texto banner MOTD
+    gre_tunnels: list       = None,  # lista de dicts con config GRE over IPsec
     log_fn=None,
 ) -> list:
     """
@@ -80,12 +89,20 @@ def build_commands(
     pol_entries    : Lista de dicts {class, action, value}.
     pol_name       : Nombre de la policy-map.
     service_policies: Lista de dicts {iface, dir, policy}.
+    enable_pw      : Contraseña para 'enable secret' (MD5 type-5). Vacío = omitir.
+    login_attempts : Número de intentos fallidos para activar bloqueo.
+    login_window   : Ventana de tiempo (seg) para contar intentos.
+    login_block_for: Segundos de bloqueo tras superar intentos.
+    banner_text    : Texto del banner MOTD. Vacío = omitir.
+    gre_tunnels    : Lista de dicts con config de túneles GRE over IPsec.
     log_fn         : Función de logging opcional (ej. self.log). Si None, no loguea.
 
     Retorna
     -------
     list : Comandos IOS en orden correcto para enviar al switch.
     """
+    from ui.tab_security_gre import build_security_commands, build_gre_ipsec_commands
+
     cmds = []
 
     # ── 1. ip routing (solo switches Layer 3) ─────────────────────────────────
@@ -240,6 +257,31 @@ def build_commands(
             f"service-policy {sp['dir']} {sp['policy']}",
             "exit"
         ]
+
+    # ── 12. Seguridad: enable secret + login block-for + banner MOTD ─────────
+    # Se aplican AL FINAL para no interferir con la sesión SSH activa que
+    # está ejecutando estos comandos (el cambio de enable secret es inmediato
+    # pero no cierra la sesión en curso).
+    sec_cmds = build_security_commands(
+        enable_pw   = enable_pw,
+        attempts    = login_attempts,
+        window      = login_window,
+        block_for   = login_block_for,
+        banner_text = banner_text,
+    )
+    if sec_cmds:
+        if log_fn:
+            log_fn(f"  [Seguridad] {len(sec_cmds)} comandos de seguridad...")
+        cmds += sec_cmds
+
+    # ── 13. GRE over IPsec ────────────────────────────────────────────────────
+    # Los túneles se configuran después de las rutas para que el sistema
+    # pueda resolver la interfaz de origen del túnel correctamente.
+    if gre_tunnels:
+        gre_cmds = build_gre_ipsec_commands(gre_tunnels)
+        if log_fn:
+            log_fn(f"  [GRE/IPsec] {len(gre_cmds)} comandos de túnel...")
+        cmds += gre_cmds
 
     return cmds
 

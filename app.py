@@ -3,6 +3,11 @@ app.py — Clase principal de la aplicación
 ==========================================
 Orquesta todas las pestañas y mantiene el estado global de la aplicación.
 
+CÓMO EJECUTAR:
+  Desde la carpeta switch_configurator/:
+    source env/bin/activate
+    python app.py
+
 Estructura de módulos:
   app.py                      ← Este archivo: clase principal + punto de entrada
   constants.py                ← Colores, versión, UPLINK_IFACE, DSCP_PRESETS
@@ -15,21 +20,28 @@ Estructura de módulos:
     tab_vlan.py               ← Pestaña ③ VLANs y Puertos
     tab_routing.py            ← Pestaña ④ Enrutamiento (rutas + OSPF)
     tab_qos.py                ← Pestaña ⑤ QoS MQC
-    tab_exec_backup.py        ← Pestañas ⑥ Ejecución y ⑦ Backup
+    tab_exec_backup.py        ← Pestañas ⑥ Ejecución y ⑦ Backup (incluye AWS S3)
+    tab_security_gre.py       ← Pestañas ⑧ Seguridad y ⑨ GRE over IPsec
 """
-import sys, os
+
+import sys
+import os
+
+# Asegura que Python encuentre ui/, core/ y constants.py
+# sin importar desde qué directorio se ejecute el script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# (en core/ y ui/ sube un nivel con dirname() adicional)
+
 import tkinter as tk
 from tkinter import ttk
 
 from constants import APP_VERSION
 from ui.widgets import apply_style
-from ui.tabs_sw_dhcp   import build_tab_sw, build_tab_dhcp
-from ui.tab_vlan       import build_tab_vlan
-from ui.tab_routing    import build_tab_routing
-from ui.tab_qos        import build_tab_qos
+from ui.tabs_sw_dhcp    import build_tab_sw, build_tab_dhcp
+from ui.tab_vlan        import build_tab_vlan
+from ui.tab_routing     import build_tab_routing
+from ui.tab_qos         import build_tab_qos
 from ui.tab_exec_backup import build_tab_exec, build_tab_backup
+from ui.tab_security_gre import build_tab_security, build_tab_gre
 
 
 class SwitchConfiguratorV2:
@@ -37,21 +49,22 @@ class SwitchConfiguratorV2:
     Clase principal que agrupa el estado global y construye la ventana.
 
     Estado global (listas de dicts en memoria):
-      sucursales     : switches que la app puede configurar
-      dhcp_pools     : pools DHCP definidos
-      vlans_data     : VLANs con sus puertos, DHCP y ACLs
-      static_routes  : rutas estáticas
-      ospf_networks  : redes a anunciar por OSPF
-      qos_classes    : class-maps de QoS
-      pol_entries    : entradas de la policy-map
+      sucursales      : switches que la app puede configurar
+      dhcp_pools      : pools DHCP definidos
+      vlans_data      : VLANs con sus puertos, DHCP y ACLs
+      static_routes   : rutas estáticas
+      ospf_networks   : redes a anunciar por OSPF
+      qos_classes     : class-maps de QoS
+      pol_entries     : entradas de la policy-map
       service_policies: aplicaciones de service-policy a interfaces
-      detected_l3    : último resultado de detección L2/L3 (puede ser None)
+      gre_tunnels     : configuraciones de túneles GRE over IPsec (v2.2)
+      detected_l3     : último resultado de detección L2/L3 (puede ser None)
     """
 
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"Configurador IOSvL2 — {APP_VERSION}")
-        self.root.geometry("960x780")
+        self.root.geometry("980x800")
         self.root.configure(bg="#0d1117")
         self.root.resizable(True, True)
 
@@ -59,15 +72,16 @@ class SwitchConfiguratorV2:
         apply_style(root)
 
         # ── Estado global ──────────────────────────────────────────────────────
-        self.sucursales      = []
-        self.dhcp_pools      = []
-        self.vlans_data      = []
-        self.static_routes   = []
-        self.ospf_networks   = []
-        self.qos_classes     = []
-        self.pol_entries     = []
+        self.sucursales       = []
+        self.dhcp_pools       = []
+        self.vlans_data       = []
+        self.static_routes    = []
+        self.ospf_networks    = []
+        self.qos_classes      = []
+        self.pol_entries      = []
         self.service_policies = []
-        self.detected_l3     = None   # True=L3 / False=L2 / None=no detectado aún
+        self.gre_tunnels      = []   # túneles GRE over IPsec (v2.2)
+        self.detected_l3      = None  # True=L3 / False=L2 / None=no detectado aún
 
         # ── Crear notebook de pestañas ─────────────────────────────────────────
         nb = ttk.Notebook(root)
@@ -76,13 +90,15 @@ class SwitchConfiguratorV2:
 
         # Definir pestañas: (nombre del atributo, etiqueta visible)
         tabs = [
-            ("tab_sw",      "① Sucursales"),
-            ("tab_dhcp",    "② DHCP"),
-            ("tab_vlan",    "③ VLANs y Puertos"),
-            ("tab_routing", "④ Enrutamiento"),
-            ("tab_qos",     "⑤ QoS MQC"),
-            ("tab_exec",    "⑥ Ejecución"),
-            ("tab_backup",  "⑦ Backup"),
+            ("tab_sw",       "① Sucursales"),
+            ("tab_dhcp",     "② DHCP"),
+            ("tab_vlan",     "③ VLANs y Puertos"),
+            ("tab_routing",  "④ Enrutamiento"),
+            ("tab_qos",      "⑤ QoS MQC"),
+            ("tab_exec",     "⑥ Ejecución"),
+            ("tab_backup",   "⑦ Backup"),
+            ("tab_security", "⑧ Seguridad"),
+            ("tab_gre",      "⑨ GRE/IPsec"),
         ]
         for attr, label in tabs:
             frame = ttk.Frame(nb)
@@ -92,13 +108,15 @@ class SwitchConfiguratorV2:
         # ── Construir contenido de cada pestaña ────────────────────────────────
         # Cada función recibe 'self' (app) y el frame de la pestaña.
         # Los widgets se guardan como atributos de 'self' (ej: self.sw_listbox).
-        build_tab_sw(self,      self.tab_sw)
-        build_tab_dhcp(self,    self.tab_dhcp)
-        build_tab_vlan(self,    self.tab_vlan)
-        build_tab_routing(self, self.tab_routing)
-        build_tab_qos(self,     self.tab_qos)
-        build_tab_exec(self,    self.tab_exec)
-        build_tab_backup(self,  self.tab_backup)
+        build_tab_sw(self,       self.tab_sw)
+        build_tab_dhcp(self,     self.tab_dhcp)
+        build_tab_vlan(self,     self.tab_vlan)
+        build_tab_routing(self,  self.tab_routing)
+        build_tab_qos(self,      self.tab_qos)
+        build_tab_exec(self,     self.tab_exec)
+        build_tab_backup(self,   self.tab_backup)
+        build_tab_security(self, self.tab_security)
+        build_tab_gre(self,      self.tab_gre)
 
 
 # ── Punto de entrada ───────────────────────────────────────────────────────────
