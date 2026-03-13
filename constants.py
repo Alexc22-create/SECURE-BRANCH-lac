@@ -6,7 +6,7 @@ Modifica aquí si quieres cambiar el tema visual o los valores por defecto.
 """
 
 # ── Versión y metadatos ────────────────────────────────────────────────────────
-APP_VERSION  = "v2.1  |  IOS 15.x / IOSvL2 / GigabitEthernet"
+APP_VERSION  = "v2.2  |  IOSvL2 15.2 / GRE-IPsec / S3 Backup"
 
 # Interfaz de uplink/gestión que NUNCA se debe modificar desde la app.
 # Esta interfaz conecta el switch al router/core; tocarlo puede dejar sin acceso.

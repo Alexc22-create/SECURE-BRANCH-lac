@@ -3,18 +3,28 @@ ui/tab_exec_backup.py — Pestañas ⑥ Ejecución  y  ⑦ Backup
 ===========================================================
 Pestaña ⑥: Botones para aplicar o limpiar config en los switches seleccionados.
             Log de consola en tiempo real.
-Pestaña ⑦: Exportar/importar config como JSON y descargar running-config.
+Pestaña ⑦: Exportar/importar config como JSON, descargar running-config
+           y hacer copias de seguridad en AWS S3.
+
+AWS S3 Backup:
+  Requiere boto3 instalado: pip install boto3 --break-system-packages
+  Credenciales configuradas en la pestaña ⑦ (Access Key + Secret Key + Region + Bucket).
+  El running-config se sube como objeto S3 con clave:
+    backups/<hostname>/<YYYY-MM-DD_HH-MM-SS>.txt
 """
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# (en core/ y ui/ sube un nivel con dirname() adicional)
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 import json
 import tkinter as tk
 from tkinter import messagebox, filedialog
 from datetime import datetime
 
-from constants import BG2, SUCCESS, WARN, TEXT2
-from ui.widgets import make_frame, make_label, make_button, make_scrolled_text, make_title
+from constants import BG, BG2, BG3, ACCENT, SUCCESS, WARN, TEXT, TEXT2, BORDER
+from ui.widgets import (make_frame, make_label, make_entry, make_button,
+                        make_scrolled_text, make_title, make_labelframe)
 from core.connector import run_on_switch, fetch_running_config
 
 
@@ -80,6 +90,7 @@ def _build_config_params(app) -> dict:
     """
     Empaqueta todos los parámetros de configuración de la app en un dict
     listo para pasarle a build_commands() en core/command_builder.py.
+    Incluye los nuevos parámetros de seguridad y GRE over IPsec (v2.2).
     """
     return {
         'chk_intervlan':   app.chk_intervlan.get(),
@@ -93,6 +104,14 @@ def _build_config_params(app) -> dict:
         'pol_entries':     app.pol_entries,
         'pol_name':        app.pol_name.get().strip(),
         'service_policies':app.service_policies,
+        # ── Seguridad (v2.2) ──────────────────────────────────────────────────
+        'enable_pw':       getattr(app, 'sec_enable_pw',      None) and app.sec_enable_pw.get().strip()      or "",
+        'login_attempts':  getattr(app, 'sec_login_attempts', None) and app.sec_login_attempts.get().strip() or "",
+        'login_window':    getattr(app, 'sec_login_window',   None) and app.sec_login_window.get().strip()   or "",
+        'login_block_for': getattr(app, 'sec_login_block',    None) and app.sec_login_block.get().strip()    or "",
+        'banner_text':     getattr(app, 'sec_banner_text',    None) and app.sec_banner_text.get("1.0", tk.END).strip() or "",
+        # ── GRE over IPsec (v2.2) ─────────────────────────────────────────────
+        'gre_tunnels':     getattr(app, 'gre_tunnels', []),
     }
 
 
@@ -191,34 +210,99 @@ def build_tab_backup(app, parent):
     """
     Construye la pestaña de Backup y Restauración.
 
+    Secciones:
+      1. Exportar / Importar JSON (config de la app, sin credenciales)
+      2. Descargar running-config a archivo .txt local
+      3. AWS S3 Backup — subir running-config de uno o varios switches a un bucket S3
+
     Widgets creados en 'app':
-      - app.backup_preview : área de texto con la vista previa del JSON / running-config
+      app.backup_preview   : ScrolledText — vista previa del JSON / running-config
+      app.s3_access_key    : Entry — AWS Access Key ID
+      app.s3_secret_key    : Entry — AWS Secret Access Key
+      app.s3_region        : Entry — Región AWS (ej. us-east-1)
+      app.s3_bucket        : Entry — Nombre del bucket S3
+      app.s3_prefix        : Entry — Prefijo/carpeta dentro del bucket (ej. backups/)
     """
     make_title(parent, "⚙  Backup y Restauración")
 
-    # Tarjetas de acción
-    for (icon, title, desc, color, cmd) in [
-        ("💾", "Exportar configuración (.json)",
-         "Guarda DHCP, VLANs, rutas y QoS. No incluye credenciales.",
-         "#21262d", lambda: export_config(app)),
+    # ── Sección 1: Export / Import JSON ───────────────────────────────────────
+    frm_json = make_labelframe(parent, "📋  Config de la App (JSON)")
+    frm_json.pack(fill="x", padx=20, pady=5)
+    make_label(frm_json,
+               "Guarda o carga la config de DHCP, VLANs, rutas y QoS. No incluye contraseñas.",
+               fg=TEXT2).pack(anchor="w")
+    bf = make_frame(frm_json); bf.pack(anchor="w", pady=4)
+    make_button(bf, "💾  Exportar .json",
+                lambda: export_config(app), color="#21262d", fg=TEXT).grid(row=0, column=0, padx=5)
+    make_button(bf, "📂  Importar .json",
+                lambda: import_config(app), color="#4a3000", fg=TEXT).grid(row=0, column=1, padx=5)
 
-        ("📂", "Cargar configuración (.json)",
-         "Restaura config previa a la app. No modifica el switch todavía.",
-         "#4a3000", lambda: import_config(app)),
+    # ── Sección 2: Running-Config local ───────────────────────────────────────
+    frm_run = make_labelframe(parent, "⬇  Running-Config del Switch  (archivo local .txt)")
+    frm_run.pack(fill="x", padx=20, pady=5)
+    make_label(frm_run,
+               "Descarga 'show running-config' de la sucursal seleccionada y guarda como .txt.",
+               fg=TEXT2).pack(anchor="w")
+    make_button(frm_run, "⬇  Descargar running-config",
+                lambda: backup_running_config(app),
+                color="#0d2137", fg=TEXT).pack(anchor="w", pady=4)
 
-        ("⬇", "Descargar running-config del switch",
-         "Descarga running-config a .txt desde la sucursal seleccionada.",
-         "#0d2137", lambda: backup_running_config(app)),
-    ]:
-        f = make_title.__module__  # placeholder para importar make_labelframe
-        from ui.widgets import make_labelframe
-        card = make_labelframe(parent, f"{icon}  {title}")
-        card.pack(fill="x", padx=20, pady=5)
-        make_label(card, desc, fg=TEXT2).pack(anchor="w")
-        make_button(card, f"{icon}  {title}", cmd, color=color, fg="#c9d1d9").pack(pady=5, anchor="w")
+    # ── Sección 3: AWS S3 Backup ──────────────────────────────────────────────
+    # El running-config se obtiene vía SSH (Netmiko) y se sube a S3 con boto3.
+    # Clave S3: <prefijo>/<hostname>/<YYYY-MM-DD_HH-MM-SS>.txt
+    # Requiere: pip install boto3 --break-system-packages
+    frm_s3 = make_labelframe(parent, "☁  Backup en AWS S3  (boto3)")
+    frm_s3.pack(fill="x", padx=20, pady=5)
+    make_label(frm_s3,
+               "Sube el running-config de las sucursales seleccionadas a un bucket S3.\n"
+               "Requiere: pip install boto3 --break-system-packages",
+               fg=TEXT2).pack(anchor="w")
 
+    # Campos de credenciales AWS
+    cred_grid = make_frame(frm_s3)
+    cred_grid.pack(fill="x", pady=4)
+
+    # Fila 0: Access Key + Secret Key
+    make_label(cred_grid, "Access Key ID:",     width=18).grid(row=0, column=0, sticky="w", pady=2)
+    app.s3_access_key = make_entry(cred_grid, width=26)
+    app.s3_access_key.grid(row=0, column=1, padx=4)
+
+    make_label(cred_grid, "Secret Access Key:", width=18).grid(row=0, column=2, sticky="w")
+    app.s3_secret_key = make_entry(cred_grid, width=34, show="*")
+    app.s3_secret_key.grid(row=0, column=3, padx=4)
+
+    # Fila 1: Region + Bucket + Prefijo
+    make_label(cred_grid, "Región AWS:",        width=18).grid(row=1, column=0, sticky="w", pady=2)
+    app.s3_region = make_entry(cred_grid, width=16)
+    app.s3_region.insert(0, "us-east-1")
+    app.s3_region.grid(row=1, column=1, padx=4, sticky="w")
+
+    make_label(cred_grid, "Bucket S3:",         width=18).grid(row=1, column=2, sticky="w")
+    app.s3_bucket = make_entry(cred_grid, width=24)
+    app.s3_bucket.insert(0, "mi-bucket-backups")
+    app.s3_bucket.grid(row=1, column=3, padx=4, sticky="w")
+
+    make_label(cred_grid, "Prefijo/carpeta:",   width=18).grid(row=2, column=0, sticky="w", pady=2)
+    app.s3_prefix = make_entry(cred_grid, width=24)
+    app.s3_prefix.insert(0, "backups/switches/")
+    app.s3_prefix.grid(row=2, column=1, padx=4, sticky="w")
+
+    make_label(cred_grid,
+               "→  Ruta en S3: <prefijo>/<hostname>/<fecha>.txt",
+               fg=TEXT2).grid(row=2, column=2, columnspan=2, sticky="w")
+
+    # Botones S3
+    s3_bf = make_frame(frm_s3); s3_bf.pack(anchor="w", pady=6)
+    make_button(s3_bf, "☁  Subir a S3 (sucursales seleccionadas)",
+                lambda: backup_to_s3(app),
+                color="#1a3a1a", fg=TEXT).grid(row=0, column=0, padx=5)
+    make_button(s3_bf, "🔍  Verificar credenciales S3",
+                lambda: verify_s3_credentials(app),
+                color=BG3, fg=TEXT).grid(row=0, column=1, padx=5)
+
+    # ── Vista previa ──────────────────────────────────────────────────────────
     make_label(parent, "Vista previa:").pack(anchor="w", padx=20, pady=(8, 2))
-    app.backup_preview = make_scrolled_text(parent, width=98, height=10, fg=TEXT2)
+    app.backup_preview = make_scrolled_text(parent, width=98, height=8, fg=TEXT2)
     app.backup_preview.pack(padx=20, pady=4)
 
 
@@ -413,3 +497,156 @@ def _show_in_preview(app, text: str):
     """Muestra texto en el área de vista previa de la pestaña de backup."""
     app.backup_preview.delete("1.0", tk.END)
     app.backup_preview.insert(tk.END, text)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AWS S3 BACKUP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_s3_client(app):
+    """
+    Crea y retorna un cliente boto3 de S3 con las credenciales ingresadas en la GUI.
+
+    Retorna
+    -------
+    boto3.client : Cliente S3 listo para usar.
+
+    Lanza
+    -----
+    ImportError  : Si boto3 no está instalado.
+    ValueError   : Si faltan credenciales o bucket.
+    Exception    : Si las credenciales son inválidas (botocore.ClientError).
+    """
+    try:
+        import boto3
+    except ImportError:
+        raise ImportError(
+            "boto3 no está instalado.\n"
+            "Ejecuta en la terminal:\n"
+            "  pip install boto3 --break-system-packages"
+        )
+
+    access_key = app.s3_access_key.get().strip()
+    secret_key = app.s3_secret_key.get().strip()
+    region     = app.s3_region.get().strip()
+    bucket     = app.s3_bucket.get().strip()
+
+    if not all([access_key, secret_key, region, bucket]):
+        raise ValueError(
+            "Completa todos los campos de AWS S3:\n"
+            "Access Key ID, Secret Access Key, Región y Bucket."
+        )
+
+    # Crear cliente con credenciales explícitas (no usa el perfil ~/.aws/credentials)
+    client = boto3.client(
+        "s3",
+        region_name          = region,
+        aws_access_key_id    = access_key,
+        aws_secret_access_key = secret_key,
+    )
+    return client, bucket
+
+
+def verify_s3_credentials(app):
+    """
+    Verifica las credenciales S3 haciendo un 'head_bucket' (operación de bajo costo).
+    Muestra un mensaje de éxito o error con detalle.
+    """
+    try:
+        client, bucket = _get_s3_client(app)
+        # head_bucket: verifica que el bucket existe y que tenemos acceso.
+        # No descarga ni sube datos; costo AWS: $0.
+        client.head_bucket(Bucket=bucket)
+        messagebox.showinfo(
+            "S3 OK ✔",
+            f"Conexión exitosa al bucket:\n  s3://{bucket}\n\n"
+            "Las credenciales son válidas."
+        )
+    except ImportError as e:
+        messagebox.showerror("boto3 no instalado", str(e))
+    except ValueError as e:
+        messagebox.showwarning("Campos incompletos", str(e))
+    except Exception as e:
+        # botocore.exceptions.ClientError con código HTTP si son inválidas
+        messagebox.showerror("Error S3", f"No se pudo conectar al bucket:\n{e}")
+
+
+def backup_to_s3(app):
+    """
+    Sube el running-config de cada sucursal seleccionada a AWS S3.
+
+    Flujo por sucursal:
+      1. Conectar por SSH y obtener running-config (fetch_running_config).
+      2. Construir la clave S3: <prefijo>/<hostname>/<YYYY-MM-DD_HH-MM-SS>.txt
+      3. Subir el contenido (string → bytes UTF-8) con put_object.
+      4. Registrar resultado en el log de la pestaña ⑥ si está disponible,
+         y en la vista previa de ⑦.
+
+    El bucket y las credenciales se toman de los campos de la UI.
+    """
+    if not _validate_sucursales(app): return
+    targets = _get_selected_sucursales(app)
+    if not targets: return
+
+    # Validar credenciales antes de conectar a los switches
+    try:
+        client, bucket = _get_s3_client(app)
+    except (ImportError, ValueError) as e:
+        messagebox.showerror("Error S3", str(e))
+        return
+
+    prefix    = app.s3_prefix.get().strip().rstrip("/")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    results   = []
+
+    for sw in targets:
+        sw_name = sw['name']
+        try:
+            # ── 1. Obtener running-config vía SSH ─────────────────────────────
+            raw = fetch_running_config(sw)
+
+            # ── 2. Construir clave S3 ─────────────────────────────────────────
+            # Formato: backups/switches/SW-NOMBRE/2025-01-15_10-30-00.txt
+            safe_name = sw_name.replace(" ", "_")
+            s3_key    = f"{prefix}/{safe_name}/{timestamp}.txt"
+
+            # ── 3. Encabezado con metadatos ───────────────────────────────────
+            header = (
+                f"# Backup generado por Configurador IOSvL2\n"
+                f"# Sucursal : {sw_name}  ({sw['ip']})\n"
+                f"# Fecha    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"# Bucket   : s3://{bucket}/{s3_key}\n"
+                f"{'#'*60}\n\n"
+            )
+            content = (header + raw).encode("utf-8")
+
+            # ── 4. Subir a S3 ─────────────────────────────────────────────────
+            # ContentType text/plain para que S3 lo muestre correctamente en el navegador.
+            # ServerSideEncryption AES256: cifrado en reposo dentro del bucket.
+            client.put_object(
+                Bucket               = bucket,
+                Key                  = s3_key,
+                Body                 = content,
+                ContentType          = "text/plain; charset=utf-8",
+                ServerSideEncryption = "AES256",  # cifrado en reposo (SSE-S3)
+            )
+            msg = f"  ✔ {sw_name} → s3://{bucket}/{s3_key}"
+            results.append(msg)
+
+        except Exception as e:
+            msg = f"  ✘ {sw_name} → Error: {e}"
+            results.append(msg)
+
+    # ── Mostrar resultados ────────────────────────────────────────────────────
+    summary = "\n".join(results)
+    _show_in_preview(app, f"=== Backup S3 — {timestamp} ===\n\n{summary}")
+
+    ok_count   = sum(1 for r in results if "✔" in r)
+    fail_count = len(results) - ok_count
+    messagebox.showinfo(
+        "Backup S3 completado",
+        f"Bucket: s3://{bucket}\n\n"
+        f"✔ Exitosos : {ok_count}\n"
+        f"✘ Fallidos : {fail_count}\n\n"
+        + summary
+    )
