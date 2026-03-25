@@ -175,21 +175,30 @@ def build_tab_dhcp(app, parent):
     Cada pool DHCP define:
       - Red y máscara → rango de IPs a asignar
       - Gateway → IP de la SVI en el switch L3 (se excluye del pool)
+      - IPs adicionales a excluir (lista, opcional)
 
     Widgets creados en 'app':
       - app.dhcp_name, dhcp_net, dhcp_mask, dhcp_gw : campos del formulario
-      - app.dhcp_listbox : lista de pools definidos
+      - app.dhcp_excl_entry    : campo para ingresar IPs a excluir
+      - app.dhcp_excl_listbox  : lista temporal de IPs a excluir del pool actual
+      - app.dhcp_excl_pending  : lista en memoria de IPs pendientes para el pool actual
+      - app.dhcp_listbox       : lista de pools definidos
     """
     make_title(parent, "⚙  Pools DHCP")
-    f = make_frame(parent)
-    f.pack(pady=6)
 
-    # Formulario de nuevo pool
+    # ── Contenedor principal en dos columnas ──────────────────────────────────
+    main = make_frame(parent)
+    main.pack(pady=6, padx=16, fill="x")
+
+    # Columna izquierda: campos base del pool
+    f = make_frame(main)
+    f.grid(row=0, column=0, sticky="n", padx=(0, 20))
+
     form_fields = [
-        ("Nombre del Pool:",       "dhcp_name"),
-        ("Red (ej.192.168.10.0):", "dhcp_net"),
-        ("Máscara:",               "dhcp_mask"),
-        ("Gateway / IP SVI:",      "dhcp_gw"),
+        ("Nombre del Pool:",          "dhcp_name"),
+        ("Red (ej.192.168.10.0):",    "dhcp_net"),
+        ("Máscara:",                  "dhcp_mask"),
+        ("Gateway / IP SVI:",         "dhcp_gw"),
     ]
     for row, (lbl_txt, attr) in enumerate(form_fields):
         make_label(f, lbl_txt).grid(row=row, column=0, sticky="e", pady=3, padx=6)
@@ -197,13 +206,33 @@ def build_tab_dhcp(app, parent):
         e.grid(row=row, column=1, padx=6, pady=3)
         setattr(app, attr, e)
 
-    make_label(f, "* El gateway se excluye automáticamente del pool DHCP",
+    make_label(f, "* El gateway se excluye automáticamente",
                fg=TEXT2).grid(row=4, columnspan=2, pady=2)
     make_button(f, "＋  Agregar Pool",
                 lambda: _add_dhcp(app),
                 color=SUCCESS, fg=BG2).grid(row=5, columnspan=2, pady=8)
 
-    # Lista de pools
+    # Columna derecha: IPs adicionales a excluir
+    fexcl = make_labelframe(main, "IPs adicionales a excluir  (opcional)")
+    fexcl.grid(row=0, column=1, sticky="n")
+
+    app.dhcp_excl_pending = []
+
+    excl_row = make_frame(fexcl)
+    excl_row.pack(fill="x", pady=4)
+    app.dhcp_excl_entry = make_entry(excl_row, width=18)
+    app.dhcp_excl_entry.pack(side="left", padx=4)
+    make_button(excl_row, "＋ Agregar IP",
+                lambda: _add_excl_ip(app),
+                color=BG3).pack(side="left", padx=4)
+
+    app.dhcp_excl_listbox = make_listbox(fexcl, width=24, height=5)
+    app.dhcp_excl_listbox.pack(padx=4, pady=2)
+    make_button(fexcl, "✕ Quitar seleccionada",
+                lambda: _remove_excl_ip(app),
+                color="#6e2020").pack(pady=2)
+
+    # Lista de pools definidos
     app.dhcp_listbox = make_listbox(parent, width=76, height=8)
     app.dhcp_listbox.pack(padx=16, pady=4)
     make_button(parent, "✕  Eliminar seleccionado",
@@ -211,18 +240,45 @@ def build_tab_dhcp(app, parent):
                 color="#6e2020").pack(pady=2)
 
 
+def _add_excl_ip(app):
+    """Agrega una IP a la lista temporal de exclusiones del pool en construcción."""
+    ip = app.dhcp_excl_entry.get().strip()
+    if not ip:
+        return
+    if ip in app.dhcp_excl_pending:
+        messagebox.showwarning("Duplicado", f"La IP {ip} ya está en la lista.")
+        return
+    app.dhcp_excl_pending.append(ip)
+    app.dhcp_excl_listbox.insert(tk.END, f"  {ip}")
+    app.dhcp_excl_entry.delete(0, tk.END)
+
+
+def _remove_excl_ip(app):
+    """Quita la IP seleccionada de la lista temporal de exclusiones."""
+    sel = app.dhcp_excl_listbox.curselection()
+    if sel:
+        app.dhcp_excl_listbox.delete(sel[0])
+        app.dhcp_excl_pending.pop(sel[0])
+
+
 def _add_dhcp(app):
     """Valida y agrega un nuevo pool DHCP a la lista en memoria."""
     pool = {k: getattr(app, f"dhcp_{k}").get().strip()
             for k in ('name', 'net', 'mask', 'gw')}
     if all(pool.values()):
+        pool['excludes'] = list(app.dhcp_excl_pending)
         app.dhcp_pools.append(pool)
+        excl_info = (f"  [{len(pool['excludes'])} excluidas]"
+                     if pool['excludes'] else "")
         app.dhcp_listbox.insert(
             tk.END,
-            f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}"
+            f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}{excl_info}"
         )
         for k in ('name', 'net', 'mask', 'gw'):
             getattr(app, f"dhcp_{k}").delete(0, tk.END)
+        # Limpiar lista temporal de exclusiones
+        app.dhcp_excl_pending.clear()
+        app.dhcp_excl_listbox.delete(0, tk.END)
     else:
         messagebox.showwarning("Faltan datos", "Completa todos los campos DHCP.")
 
