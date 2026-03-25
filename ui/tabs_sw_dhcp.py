@@ -19,6 +19,7 @@ from ui.widgets import (
     make_listbox, make_labelframe, make_title,
 )
 from core.connector import test_connection
+from ui.validators import is_valid_ip, is_valid_mask, ip_in_network
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -120,6 +121,15 @@ def _add_sucursal(app):
           for k in ('name', 'ip', 'user', 'pass', 'secret')}
     if not all([sw['name'], sw['ip'], sw['user'], sw['pass'], sw['secret']]):
         messagebox.showwarning("Incompleto", "Completa todos los campos.")
+        return
+    if not is_valid_ip(sw['ip']):
+        messagebox.showerror("IP inválida",
+            f"'{sw['ip']}' no es una dirección IPv4 válida.\nEjemplo: 192.168.1.10")
+        return
+    # Evitar duplicados por IP
+    if any(s['ip'] == sw['ip'] for s in app.sucursales):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe una sucursal con la IP {sw['ip']}.")
         return
     app.sucursales.append(sw)
     app.sw_listbox.insert(
@@ -281,6 +291,35 @@ def _add_dhcp(app):
         app.dhcp_excl_listbox.delete(0, tk.END)
     else:
         messagebox.showwarning("Faltan datos", "Completa todos los campos DHCP.")
+        return
+    if not is_valid_ip(pool['net']):
+        messagebox.showerror("Red inválida",
+            f"'{pool['net']}' no es una dirección IPv4 válida.\nEjemplo: 192.168.10.0")
+        return
+    if not is_valid_mask(pool['mask']):
+        messagebox.showerror("Máscara inválida",
+            f"'{pool['mask']}' no es una máscara de subred válida.\nEjemplo: 255.255.255.0")
+        return
+    if not is_valid_ip(pool['gw']):
+        messagebox.showerror("Gateway inválido",
+            f"'{pool['gw']}' no es una dirección IPv4 válida.\nEjemplo: 192.168.10.1")
+        return
+    if not ip_in_network(pool['gw'], pool['net'], pool['mask']):
+        messagebox.showerror("Gateway fuera de red",
+            f"El gateway {pool['gw']} no pertenece a la red "
+            f"{pool['net']} / {pool['mask']}.")
+        return
+    if any(p['name'] == pool['name'] for p in app.dhcp_pools):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe un pool DHCP con el nombre '{pool['name']}'.")
+        return
+    app.dhcp_pools.append(pool)
+    app.dhcp_listbox.insert(
+        tk.END,
+        f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}"
+    )
+    for k in ('name', 'net', 'mask', 'gw'):
+        getattr(app, f"dhcp_{k}").delete(0, tk.END)
 
 
 def _remove_dhcp(app):

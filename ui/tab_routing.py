@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from constants import BG3, SUCCESS, TEXT2
+from ui.validators import is_valid_ip, is_valid_mask, is_valid_wildcard, is_positive_int
 from ui.widgets import (
     make_frame, make_label, make_entry, make_button,
     make_listbox, make_labelframe, make_title, make_scrolled_frame,
@@ -150,6 +151,22 @@ def _add_static_route(app):
     if not all([d, m, n]):
         messagebox.showwarning("Incompleto", "Completa los 3 campos.")
         return
+    if not is_valid_ip(d):
+        messagebox.showerror("Destino inválido",
+            f"'{d}' no es una dirección IPv4 válida.\nEjemplo: 10.0.0.0")
+        return
+    if not is_valid_mask(m):
+        messagebox.showerror("Máscara inválida",
+            f"'{m}' no es una máscara de subred válida.\nEjemplo: 255.255.255.0")
+        return
+    if not is_valid_ip(n):
+        messagebox.showerror("Next-hop inválido",
+            f"'{n}' no es una dirección IPv4 válida.\nEjemplo: 10.255.255.1")
+        return
+    if any(r['dest'] == d and r['mask'] == m for r in app.static_routes):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe una ruta hacia {d} {m}.")
+        return
     app.static_routes.append({'dest': d, 'mask': m, 'nexthop': n})
     app.rt_listbox.insert(tk.END, f"  ip route {d} {m} {n}")
     app.rt_dest.delete(0, tk.END)
@@ -165,6 +182,10 @@ def _add_default_route(app):
     nh = app.default_nh.get().strip()
     if not nh:
         messagebox.showwarning("Incompleto", "Escribe el next-hop (IP de R1).")
+        return
+    if not is_valid_ip(nh):
+        messagebox.showerror("Next-hop inválido",
+            f"'{nh}' no es una dirección IPv4 válida.\nEjemplo: 10.255.255.1")
         return
     # Buscar si ya hay una ruta por defecto y preguntar si reemplazarla
     for rt in app.static_routes:
@@ -197,8 +218,29 @@ def _add_ospf_network(app):
     net  = app.ospf_net.get().strip()
     wild = app.ospf_wild.get().strip()
     area = app.ospf_area.get().strip()
+    pid  = app.ospf_pid.get().strip()
     if not all([net, wild, area]):
         messagebox.showwarning("Incompleto", "Completa todos los campos.")
+        return
+    if not is_valid_ip(net):
+        messagebox.showerror("Red inválida",
+            f"'{net}' no es una dirección IPv4 válida.\nEjemplo: 192.168.10.0")
+        return
+    if not is_valid_wildcard(wild):
+        messagebox.showerror("Wildcard inválido",
+            f"'{wild}' no es un wildcard OSPF válido.\nEjemplo: 0.0.0.255")
+        return
+    if not is_positive_int(area, min_val=0):
+        messagebox.showerror("Área inválida",
+            f"El área OSPF debe ser un número entero >= 0 (valor: '{area}').")
+        return
+    if not is_positive_int(pid, min_val=1, max_val=65535):
+        messagebox.showerror("PID inválido",
+            f"El PID OSPF debe ser un entero entre 1 y 65535 (valor: '{pid}').")
+        return
+    if any(n['network'] == net and n['wildcard'] == wild for n in app.ospf_networks):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe la red OSPF {net} {wild}.")
         return
     app.ospf_networks.append({'network': net, 'wildcard': wild, 'area': area})
     app.ospf_listbox.insert(tk.END, f"  network {net} {wild} area {area}")
