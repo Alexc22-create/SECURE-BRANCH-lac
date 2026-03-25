@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from constants import BG3, SUCCESS, TEXT2
+from constants import BG2, BG3, SUCCESS, TEXT2
+from ui.preview_window import show_preview
 from ui.widgets import (
     make_frame, make_label, make_entry, make_button,
     make_listbox, make_labelframe, make_title, make_scrolled_frame,
@@ -132,6 +133,11 @@ def build_tab_routing(app, parent):
                 lambda: _remove_ospf_network(app),
                 color="#6e2020").pack(anchor="w")
 
+    # ── Vista previa ──────────────────────────────────────────────────────────
+    make_button(sf, "👁  Ver comandos IOS de Enrutamiento",
+                lambda: _preview_routing(app),
+                color=BG2).pack(anchor="w", padx=12, pady=(12, 4))
+
 
 # ── Handlers internos ──────────────────────────────────────────────────────────
 
@@ -234,3 +240,23 @@ def _remove_ospf_network(app):
     if sel:
         app.ospf_listbox.delete(sel[0])
         app.ospf_networks.pop(sel[0])
+
+
+def _preview_routing(app):
+    """Muestra la vista previa de los comandos de enrutamiento."""
+    from core.command_builder import build_commands
+    cmds = build_commands(
+        is_l3=app.chk_intervlan.get(),
+        chk_intervlan=app.chk_intervlan.get(),
+        dhcp_pools=[], vlans_data=[],
+        static_routes=app.static_routes,
+        chk_ospf=app.chk_ospf.get(),
+        ospf_pid=app.ospf_pid.get().strip(),
+        ospf_networks=app.ospf_networks,
+        qos_classes=[], pol_entries=[], pol_name="", service_policies=[],
+    )
+    show_preview(
+        app.root, "Enrutamiento — Rutas estáticas y OSPF", cmds,
+        note="'ip routing' solo aplica en switches L3. "
+             "Sin él, las rutas estáticas y OSPF se omiten en switches L2.",
+    )

@@ -19,6 +19,7 @@ from ui.widgets import (
     make_listbox, make_labelframe, make_title,
 )
 from core.connector import test_connection
+from ui.preview_window import show_preview
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -206,9 +207,15 @@ def build_tab_dhcp(app, parent):
     # Lista de pools
     app.dhcp_listbox = make_listbox(parent, width=76, height=8)
     app.dhcp_listbox.pack(padx=16, pady=4)
-    make_button(parent, "✕  Eliminar seleccionado",
+
+    btn_row = make_frame(parent)
+    btn_row.pack(pady=2)
+    make_button(btn_row, "✕  Eliminar seleccionado",
                 lambda: _remove_dhcp(app),
-                color="#6e2020").pack(pady=2)
+                color="#6e2020").pack(side="left", padx=6)
+    make_button(btn_row, "👁  Ver comandos IOS",
+                lambda: _preview_dhcp(app),
+                color=BG3).pack(side="left", padx=6)
 
 
 def _add_dhcp(app):
@@ -233,6 +240,22 @@ def _remove_dhcp(app):
     if sel:
         app.dhcp_listbox.delete(sel[0])
         app.dhcp_pools.pop(sel[0])
+
+
+def _preview_dhcp(app):
+    """Muestra la vista previa de los comandos DHCP que se generarán."""
+    from core.command_builder import build_commands
+    cmds = build_commands(
+        is_l3=True, chk_intervlan=True,
+        dhcp_pools=app.dhcp_pools,
+        vlans_data=[], static_routes=[],
+        chk_ospf=False, ospf_pid="1", ospf_networks=[],
+        qos_classes=[], pol_entries=[], pol_name="", service_policies=[],
+    )
+    show_preview(
+        app.root, "DHCP — Pools y exclusiones", cmds,
+        note="Solo aplica en switches L3 (ip routing activo).",
+    )
 
 
 def get_dhcp_options(app) -> list:

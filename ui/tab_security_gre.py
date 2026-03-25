@@ -27,6 +27,7 @@ from constants import (BG, BG2, BG3, ACCENT, ACCENT2, SUCCESS, WARN,
                        TEXT, TEXT2, BORDER)
 from ui.widgets import (make_frame, make_label, make_entry, make_button,
                         make_labelframe, make_title, make_scrolled_text)
+from ui.preview_window import show_preview
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -124,7 +125,7 @@ def build_tab_security(app, parent):
 
 
 def _preview_security_commands(app):
-    """Muestra en un messagebox los comandos IOS que se generarían con los datos actuales."""
+    """Muestra en la ventana de vista previa los comandos IOS de seguridad."""
     cmds = build_security_commands(
         enable_pw     = app.sec_enable_pw.get().strip(),
         attempts      = app.sec_login_attempts.get().strip(),
@@ -132,10 +133,11 @@ def _preview_security_commands(app):
         block_for     = app.sec_login_block.get().strip(),
         banner_text   = app.sec_banner_text.get("1.0", tk.END).strip(),
     )
-    if cmds:
-        messagebox.showinfo("Comandos de seguridad", "\n".join(cmds))
-    else:
-        messagebox.showinfo("Sin comandos", "No hay parámetros de seguridad configurados.")
+    show_preview(
+        app.root, "Seguridad — enable secret, login block-for, banner MOTD", cmds,
+        note="Estos comandos se aplican al final de la ejecución "
+             "para no interrumpir la sesión SSH activa.",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -313,12 +315,13 @@ def _del_gre_tunnel(app):
 
 
 def _preview_gre_commands(app):
-    """Muestra los comandos IOS generados para los túneles en pantalla."""
+    """Muestra en la ventana de vista previa los comandos IOS de GRE over IPsec."""
     cmds = build_gre_ipsec_commands(app.gre_tunnels)
-    if cmds:
-        messagebox.showinfo("Comandos GRE over IPsec", "\n".join(cmds))
-    else:
-        messagebox.showinfo("Sin túneles", "No hay túneles GRE configurados.")
+    show_preview(
+        app.root, "GRE over IPsec — ISAKMP, Crypto Map, Tunnel", cmds,
+        note="Las PSKs aparecen en texto plano aquí. "
+             "No compartas esta vista previa.",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

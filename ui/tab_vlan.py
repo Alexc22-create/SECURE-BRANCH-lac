@@ -20,6 +20,7 @@ from ui.widgets import (
     make_scrolled_text,
 )
 from ui.tabs_sw_dhcp import get_dhcp_options
+from ui.preview_window import show_preview
 
 
 def build_tab_vlan(app, parent):
@@ -114,6 +115,9 @@ def build_tab_vlan(app, parent):
     make_button(btn_r, "✕  Eliminar VLAN",
                 lambda: _remove_vlan(app),
                 color="#6e2020").pack(side="left", padx=6)
+    make_button(btn_r, "👁  Ver comandos IOS",
+                lambda: _preview_vlans(app),
+                color=BG2).pack(side="left", padx=6)
 
     app.vlan_listbox = make_listbox(sf, width=92, height=6)
     app.vlan_listbox.pack(padx=12, pady=4)
@@ -208,3 +212,19 @@ def _remove_vlan(app):
     if sel:
         app.vlan_listbox.delete(sel[0])
         app.vlans_data.pop(sel[0])
+
+
+def _preview_vlans(app):
+    """Muestra la vista previa de los comandos de VLANs, puertos, ACLs y SVIs."""
+    from core.command_builder import build_commands
+    cmds = build_commands(
+        is_l3=True, chk_intervlan=False,
+        dhcp_pools=app.dhcp_pools,
+        vlans_data=app.vlans_data,
+        static_routes=[], chk_ospf=False, ospf_pid="1", ospf_networks=[],
+        qos_classes=[], pol_entries=[], pol_name="", service_policies=[],
+    )
+    show_preview(
+        app.root, "VLANs, Puertos, ACLs y SVIs", cmds,
+        note="Los comandos de SVI (ip address) solo se aplican en switches L3.",
+    )
