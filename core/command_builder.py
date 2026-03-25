@@ -118,6 +118,8 @@ def build_commands(
     if is_l3:
         for pool in dhcp_pools:
             cmds.append(f"ip dhcp excluded-address {pool['gw']}")   # excluir gateway
+            if pool.get('exclude', '').strip():
+                cmds.append(f"ip dhcp excluded-address {pool['exclude'].strip()}")
             cmds += [
                 f"ip dhcp pool {pool['name']}",
                 f"network {pool['net']} {pool['mask']}",

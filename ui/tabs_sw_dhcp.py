@@ -186,10 +186,11 @@ def build_tab_dhcp(app, parent):
 
     # Formulario de nuevo pool
     form_fields = [
-        ("Nombre del Pool:",       "dhcp_name"),
-        ("Red (ej.192.168.10.0):", "dhcp_net"),
-        ("Máscara:",               "dhcp_mask"),
-        ("Gateway / IP SVI:",      "dhcp_gw"),
+        ("Nombre del Pool:",          "dhcp_name"),
+        ("Red (ej.192.168.10.0):",    "dhcp_net"),
+        ("Máscara:",                  "dhcp_mask"),
+        ("Gateway / IP SVI:",         "dhcp_gw"),
+        ("IP adicional a excluir\n(opcional):", "dhcp_exclude"),
     ]
     for row, (lbl_txt, attr) in enumerate(form_fields):
         make_label(f, lbl_txt).grid(row=row, column=0, sticky="e", pady=3, padx=6)
@@ -198,10 +199,10 @@ def build_tab_dhcp(app, parent):
         setattr(app, attr, e)
 
     make_label(f, "* El gateway se excluye automáticamente del pool DHCP",
-               fg=TEXT2).grid(row=4, columnspan=2, pady=2)
+               fg=TEXT2).grid(row=5, columnspan=2, pady=2)
     make_button(f, "＋  Agregar Pool",
                 lambda: _add_dhcp(app),
-                color=SUCCESS, fg=BG2).grid(row=5, columnspan=2, pady=8)
+                color=SUCCESS, fg=BG2).grid(row=6, columnspan=2, pady=8)
 
     # Lista de pools
     app.dhcp_listbox = make_listbox(parent, width=76, height=8)
@@ -214,14 +215,16 @@ def build_tab_dhcp(app, parent):
 def _add_dhcp(app):
     """Valida y agrega un nuevo pool DHCP a la lista en memoria."""
     pool = {k: getattr(app, f"dhcp_{k}").get().strip()
-            for k in ('name', 'net', 'mask', 'gw')}
-    if all(pool.values()):
+            for k in ('name', 'net', 'mask', 'gw', 'exclude')}
+    required = {k: v for k, v in pool.items() if k != 'exclude'}
+    if all(required.values()):
         app.dhcp_pools.append(pool)
+        excl_info = f"  Excluir:{pool['exclude']}" if pool['exclude'] else ""
         app.dhcp_listbox.insert(
             tk.END,
-            f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}"
+            f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}{excl_info}"
         )
-        for k in ('name', 'net', 'mask', 'gw'):
+        for k in ('name', 'net', 'mask', 'gw', 'exclude'):
             getattr(app, f"dhcp_{k}").delete(0, tk.END)
     else:
         messagebox.showwarning("Faltan datos", "Completa todos los campos DHCP.")
