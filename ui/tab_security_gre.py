@@ -25,6 +25,8 @@ from tkinter import messagebox
 
 from constants import (BG, BG2, BG3, ACCENT, ACCENT2, SUCCESS, WARN,
                        TEXT, TEXT2, BORDER)
+from ui.validators import (is_valid_ip, is_valid_mask, is_valid_interface,
+                           is_positive_int, is_valid_psk)
 from ui.widgets import (make_frame, make_label, make_entry, make_button,
                         make_labelframe, make_title, make_scrolled_text)
 
@@ -124,13 +126,37 @@ def build_tab_security(app, parent):
 
 
 def _preview_security_commands(app):
-    """Muestra en un messagebox los comandos IOS que se generarían con los datos actuales."""
+    """Valida y muestra en un messagebox los comandos IOS que se generarían."""
+    attempts  = app.sec_login_attempts.get().strip()
+    window    = app.sec_login_window.get().strip()
+    block_for = app.sec_login_block.get().strip()
+
+    # Validar campos de bloqueo solo si alguno tiene valor
+    if any([attempts, window, block_for]):
+        if not is_positive_int(attempts, min_val=1):
+            messagebox.showerror("Intentos inválidos",
+                f"'Intentos máx' debe ser un entero >= 1 (valor: '{attempts}').")
+            return
+        if not is_positive_int(window, min_val=1):
+            messagebox.showerror("Ventana inválida",
+                f"'Ventana (seg)' debe ser un entero >= 1 (valor: '{window}').")
+            return
+        if not is_positive_int(block_for, min_val=1):
+            messagebox.showerror("Bloqueo inválido",
+                f"'Bloquear (seg)' debe ser un entero >= 1 (valor: '{block_for}').")
+            return
+
+    banner_text = app.sec_banner_text.get("1.0", tk.END).strip()
+    if banner_text and '#' in banner_text:
+        messagebox.showwarning("Carácter no permitido en banner",
+            "El texto del banner contiene '#'. Se reemplazará por '*' automáticamente.")
+
     cmds = build_security_commands(
         enable_pw     = app.sec_enable_pw.get().strip(),
-        attempts      = app.sec_login_attempts.get().strip(),
-        window        = app.sec_login_window.get().strip(),
-        block_for     = app.sec_login_block.get().strip(),
-        banner_text   = app.sec_banner_text.get("1.0", tk.END).strip(),
+        attempts      = attempts,
+        window        = window,
+        block_for     = block_for,
+        banner_text   = banner_text,
     )
     if cmds:
         messagebox.showinfo("Comandos de seguridad", "\n".join(cmds))
@@ -269,21 +295,72 @@ def build_tab_gre(app, parent):
 
 def _add_gre_tunnel(app):
     """Valida campos y agrega una configuración de túnel GRE a la lista en memoria."""
-    tid   = app.gre_tunnel_id.get().strip()
-    src   = app.gre_local_src.get().strip()
-    dst   = app.gre_remote_dst.get().strip()
-    tip   = app.gre_tunnel_ip.get().strip()
-    tmask = app.gre_tunnel_mask.get().strip()
-    psk   = app.gre_isakmp_key.get().strip()
-    peer  = app.gre_isakmp_peer.get().strip()
-    mname = app.gre_map_name.get().strip()
-    mseq  = app.gre_map_seq.get().strip()
+    tid    = app.gre_tunnel_id.get().strip()
+    src    = app.gre_local_src.get().strip()
+    dst    = app.gre_remote_dst.get().strip()
+    tip    = app.gre_tunnel_ip.get().strip()
+    tmask  = app.gre_tunnel_mask.get().strip()
+    psk    = app.gre_isakmp_key.get().strip()
+    peer   = app.gre_isakmp_peer.get().strip()
+    mname  = app.gre_map_name.get().strip()
+    mseq   = app.gre_map_seq.get().strip()
     biface = app.gre_bind_iface.get().strip()
 
     # Validar campos obligatorios
     if not all([tid, src, dst, tip, tmask, psk, peer, mname, mseq, biface]):
         messagebox.showwarning("Campos incompletos",
                                "Completa todos los campos del túnel GRE.")
+        return
+
+    # Tunnel ID: entero >= 0
+    if not is_positive_int(tid, min_val=0):
+        messagebox.showerror("Tunnel ID inválido",
+            f"El Tunnel ID debe ser un número entero >= 0 (valor: '{tid}').")
+        return
+
+    # Validar direcciones IP
+    for label, val in [("IP origen (src)", src), ("IP destino (dst)", dst),
+                       ("IP del túnel", tip), ("IP del peer IPsec", peer)]:
+        if not is_valid_ip(val):
+            messagebox.showerror(f"{label} inválida",
+                f"'{val}' no es una dirección IPv4 válida.\nEjemplo: 192.168.1.1")
+            return
+
+    # Máscara del túnel
+    if not is_valid_mask(tmask):
+        messagebox.showerror("Máscara inválida",
+            f"'{tmask}' no es una máscara de subred válida.\nEjemplo: 255.255.255.252")
+        return
+
+    # src y dst no pueden ser iguales
+    if src == dst:
+        messagebox.showerror("Configuración inválida",
+            "La IP origen y la IP destino del túnel no pueden ser la misma.")
+        return
+
+    # PSK: sin espacios
+    if not is_valid_psk(psk):
+        messagebox.showerror("Pre-shared Key inválida",
+            "La clave PSK no puede contener espacios ni estar vacía.")
+        return
+
+    # Map seq: entero positivo
+    if not is_positive_int(mseq, min_val=1):
+        messagebox.showerror("Secuencia inválida",
+            f"La secuencia del crypto map debe ser un entero >= 1 (valor: '{mseq}').")
+        return
+
+    # Interfaz física de bind: formato válido
+    if not is_valid_interface(biface):
+        messagebox.showerror("Interfaz (bind) inválida",
+            f"'{biface}' no es un nombre de interfaz Cisco válido.\n"
+            "Ejemplo: GigabitEthernet0/1")
+        return
+
+    # Evitar Tunnel ID duplicado
+    if any(t['tunnel_id'] == tid for t in app.gre_tunnels):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe un túnel con ID {tid} (Tunnel{tid}).")
         return
 
     entry = {

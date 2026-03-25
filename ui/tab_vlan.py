@@ -20,6 +20,7 @@ from ui.widgets import (
     make_scrolled_text,
 )
 from ui.tabs_sw_dhcp import get_dhcp_options
+from ui.validators import validate_vlan_id, validate_port_range
 
 
 def build_tab_vlan(app, parent):
@@ -153,6 +154,18 @@ def _add_vlan(app):
         messagebox.showwarning("Error", "El ID de VLAN es obligatorio.")
         return
 
+    # Validar rango 1–4094
+    ok, err = validate_vlan_id(vid)
+    if not ok:
+        messagebox.showerror("ID de VLAN inválido", err)
+        return
+
+    # Evitar VLANs duplicadas
+    if any(v['id'] == vid for v in app.vlans_data):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe una VLAN con el ID {vid}.")
+        return
+
     # Resolver el pool DHCP seleccionado (si aplica)
     dhcp_idx = None
     if app.chk_dhcp_var.get():
@@ -166,8 +179,19 @@ def _add_vlan(app):
             messagebox.showwarning("DHCP", "Selecciona un pool válido.")
             return
 
-    # Proteger el uplink
+    # Validar formato de puertos
     ports_raw = app.v_ports.get().strip() if app.chk_port_var.get() else ""
+    if app.chk_port_var.get():
+        if not ports_raw:
+            messagebox.showwarning("Puertos vacíos",
+                "Marcaste 'Asignar puertos' pero el campo está vacío.")
+            return
+        ok, err = validate_port_range(ports_raw)
+        if not ok:
+            messagebox.showerror("Puerto inválido", err)
+            return
+
+    # Proteger el uplink
     if ports_raw and UPLINK_IFACE.lower() in ports_raw.lower():
         messagebox.showwarning("Uplink protegido",
             f"{UPLINK_IFACE} es el uplink y no se puede asignar a una VLAN.")

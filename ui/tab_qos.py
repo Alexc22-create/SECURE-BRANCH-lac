@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from constants import BG2, BG3, SUCCESS, TEXT, TEXT2, UPLINK_IFACE, DSCP_PRESETS
+from ui.validators import is_valid_ios_name, is_valid_interface, is_positive_int
 from ui.widgets import (
     make_frame, make_label, make_entry, make_button,
     make_listbox, make_labelframe, make_title, make_scrolled_frame,
@@ -196,6 +197,15 @@ def _add_qos_class(app):
     if not all([name, crit, val]):
         messagebox.showwarning("Incompleto", "Completa nombre, criterio y valor.")
         return
+    if not is_valid_ios_name(name):
+        messagebox.showerror("Nombre inválido",
+            f"'{name}' contiene caracteres no permitidos.\n"
+            "Usa solo letras, números, guiones (-) y guiones bajos (_).")
+        return
+    if any(c['name'] == name for c in app.qos_classes):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe un class-map con el nombre '{name}'.")
+        return
     app.qos_classes.append({'name': name, 'match_type': mtype, 'criteria': crit, 'value': val})
     app.cls_listbox.insert(tk.END, f"  class-map {mtype} {name:20}  match {crit} {val}")
     app.cls_name.delete(0, tk.END)
@@ -214,8 +224,29 @@ def _add_pol_entry(app):
     cls    = app.pol_class_sel.get()
     action = app.pol_action.get()
     val    = app.pol_value.get().strip()
+    pol    = app.pol_name.get().strip()
     if cls in ("(↻ actualizar)", "(sin clases)") or not val:
         messagebox.showwarning("Incompleto", "Selecciona clase y valor.")
+        return
+    if not pol:
+        messagebox.showwarning("Nombre de política vacío",
+            "El nombre de la policy-map no puede estar vacío.")
+        return
+    if not is_valid_ios_name(pol):
+        messagebox.showerror("Nombre de política inválido",
+            f"'{pol}' contiene caracteres no permitidos.\n"
+            "Usa solo letras, números, guiones (-) y guiones bajos (_).")
+        return
+    # Acciones numéricas: el valor debe ser un entero positivo
+    if action in ("priority", "bandwidth", "police rate", "shape average"):
+        if not is_positive_int(val, min_val=1):
+            messagebox.showerror("Valor inválido",
+                f"La acción '{action}' requiere un número entero positivo (bps).\n"
+                f"Valor recibido: '{val}'")
+            return
+    if any(e['class'] == cls and e['action'] == action for e in app.pol_entries):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe una entrada para la clase '{cls}' con la acción '{action}'.")
         return
     app.pol_entries.append({'class': cls, 'action': action, 'value': val})
     app.pol_listbox.insert(tk.END, f"  class {cls:22}  →  {action} {val}")
@@ -240,11 +271,27 @@ def _add_service_policy(app):
     if not iface:
         messagebox.showwarning("Incompleto", "Indica la interfaz.")
         return
+    if not is_valid_interface(iface):
+        messagebox.showerror("Interfaz inválida",
+            f"'{iface}' no es un nombre de interfaz Cisco válido.\n"
+            "Ejemplos: GigabitEthernet0/1, Gi0/1, Vlan10")
+        return
+    if not pol:
+        messagebox.showwarning("Política vacía",
+            "El nombre de la policy-map no puede estar vacío.")
+        return
     if UPLINK_IFACE.lower() in iface.lower():
         messagebox.showwarning("Uplink protegido",
                                f"No apliques QoS directamente en {UPLINK_IFACE}.\n"
                                "Usa una interfaz de acceso.")
         return
+    dirs_a_agregar = ["input", "output"] if direction == "both" else [direction]
+    for d in dirs_a_agregar:
+        if any(sp['iface'].lower() == iface.lower() and sp['dir'] == d
+               for sp in app.service_policies):
+            messagebox.showwarning("Duplicado",
+                f"Ya existe una service-policy {d} en {iface}.")
+            return
     # 'both' genera dos service-policy: una de input y una de output
     dirs = ["input", "output"] if direction == "both" else [direction]
     for d in dirs:
