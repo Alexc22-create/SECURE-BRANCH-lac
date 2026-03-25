@@ -26,6 +26,7 @@ from constants import BG, BG2, BG3, ACCENT, SUCCESS, WARN, TEXT, TEXT2, BORDER
 from ui.widgets import (make_frame, make_label, make_entry, make_button,
                         make_scrolled_text, make_title, make_labelframe)
 from core.connector import run_on_switch, fetch_running_config
+from ui.preview_window import show_preview
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -47,6 +48,9 @@ def build_tab_exec(app, parent):
     make_button(bf, "🗑  LIMPIAR SWITCH\n    (sin tocar SSH)",
                 lambda: clean_switch(app),
                 color="#6e2020").grid(row=0, column=1, padx=8)
+    make_button(bf, "👁  VER TODOS LOS\n    COMANDOS IOS",
+                lambda: _preview_all_commands(app),
+                color=BG3).grid(row=0, column=2, padx=8)
 
     make_label(parent,
                "Selecciona las sucursales en la pestaña ① antes de aplicar.",
@@ -157,6 +161,45 @@ def deploy_config(app):
     if ok > 0 and messagebox.askyesno("Exportar",
                                       "¿Exportar esta configuración a .json?"):
         export_config(app)
+
+
+def _preview_all_commands(app):
+    """
+    Genera y muestra en la ventana de vista previa la totalidad de comandos
+    IOS que se enviarán al switch al pulsar 'Aplicar'.
+    Se asume modo L3 para mostrar el conjunto completo; en switches L2
+    los comandos de DHCP y SVIs se omiten automáticamente al ejecutar.
+    """
+    from core.command_builder import build_commands
+    params = _build_config_params(app)
+    cmds = build_commands(
+        is_l3=True,           # asunción para mostrar el set completo
+        chk_intervlan=params['chk_intervlan'],
+        dhcp_pools=params['dhcp_pools'],
+        vlans_data=params['vlans_data'],
+        static_routes=params['static_routes'],
+        chk_ospf=params['chk_ospf'],
+        ospf_pid=params['ospf_pid'],
+        ospf_networks=params['ospf_networks'],
+        qos_classes=params['qos_classes'],
+        pol_entries=params['pol_entries'],
+        pol_name=params['pol_name'],
+        service_policies=params['service_policies'],
+        enable_pw=params['enable_pw'],
+        login_attempts=params['login_attempts'],
+        login_window=params['login_window'],
+        login_block_for=params['login_block_for'],
+        banner_text=params['banner_text'],
+        gre_tunnels=params['gre_tunnels'],
+    )
+    show_preview(
+        app.root,
+        "Todos los comandos IOS — Vista completa",
+        cmds,
+        note="Previsualización asumiendo switch L3. "
+             "En switches L2 se omiten automáticamente: "
+             "ip routing, DHCP pools y SVIs con IP.",
+    )
 
 
 def clean_switch(app):

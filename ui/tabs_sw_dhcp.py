@@ -20,6 +20,7 @@ from ui.widgets import (
 )
 from core.connector import test_connection
 from ui.validators import is_valid_ip, is_valid_mask, ip_in_network
+from ui.preview_window import show_preview
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -245,9 +246,15 @@ def build_tab_dhcp(app, parent):
     # Lista de pools definidos
     app.dhcp_listbox = make_listbox(parent, width=76, height=8)
     app.dhcp_listbox.pack(padx=16, pady=4)
-    make_button(parent, "✕  Eliminar seleccionado",
+
+    btn_row = make_frame(parent)
+    btn_row.pack(pady=2)
+    make_button(btn_row, "✕  Eliminar seleccionado",
                 lambda: _remove_dhcp(app),
-                color="#6e2020").pack(pady=2)
+                color="#6e2020").pack(side="left", padx=6)
+    make_button(btn_row, "👁  Ver comandos IOS",
+                lambda: _preview_dhcp(app),
+                color=BG3).pack(side="left", padx=6)
 
 
 def _add_excl_ip(app):
@@ -275,23 +282,11 @@ def _add_dhcp(app):
     """Valida y agrega un nuevo pool DHCP a la lista en memoria."""
     pool = {k: getattr(app, f"dhcp_{k}").get().strip()
             for k in ('name', 'net', 'mask', 'gw')}
-    if all(pool.values()):
-        pool['excludes'] = list(app.dhcp_excl_pending)
-        app.dhcp_pools.append(pool)
-        excl_info = (f"  [{len(pool['excludes'])} excluidas]"
-                     if pool['excludes'] else "")
-        app.dhcp_listbox.insert(
-            tk.END,
-            f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}{excl_info}"
-        )
-        for k in ('name', 'net', 'mask', 'gw'):
-            getattr(app, f"dhcp_{k}").delete(0, tk.END)
-        # Limpiar lista temporal de exclusiones
-        app.dhcp_excl_pending.clear()
-        app.dhcp_excl_listbox.delete(0, tk.END)
-    else:
+    # ── 1. Campos obligatorios ────────────────────────────────────────────────
+    if not all(pool.values()):
         messagebox.showwarning("Faltan datos", "Completa todos los campos DHCP.")
         return
+    # ── 2. Validaciones de formato ────────────────────────────────────────────
     if not is_valid_ip(pool['net']):
         messagebox.showerror("Red inválida",
             f"'{pool['net']}' no es una dirección IPv4 válida.\nEjemplo: 192.168.10.0")
@@ -313,6 +308,22 @@ def _add_dhcp(app):
         messagebox.showwarning("Duplicado",
             f"Ya existe un pool DHCP con el nombre '{pool['name']}'.")
         return
+    # ── 3. Agregar a memoria y UI ─────────────────────────────────────────────
+    pool['excludes'] = list(app.dhcp_excl_pending)
+    app.dhcp_pools.append(pool)
+    excl_info = (f"  [{len(pool['excludes'])} excluidas]" if pool['excludes'] else "")
+    app.dhcp_listbox.insert(
+        tk.END,
+        f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}{excl_info}"
+    )
+    for k in ('name', 'net', 'mask', 'gw'):
+        getattr(app, f"dhcp_{k}").delete(0, tk.END)
+    app.dhcp_excl_pending.clear()
+    app.dhcp_excl_listbox.delete(0, tk.END)
+    if any(p['name'] == pool['name'] for p in app.dhcp_pools):
+        messagebox.showwarning("Duplicado",
+            f"Ya existe un pool DHCP con el nombre '{pool['name']}'.")
+        return
     app.dhcp_pools.append(pool)
     app.dhcp_listbox.insert(
         tk.END,
@@ -328,6 +339,22 @@ def _remove_dhcp(app):
     if sel:
         app.dhcp_listbox.delete(sel[0])
         app.dhcp_pools.pop(sel[0])
+
+
+def _preview_dhcp(app):
+    """Muestra la vista previa de los comandos DHCP que se generarán."""
+    from core.command_builder import build_commands
+    cmds = build_commands(
+        is_l3=True, chk_intervlan=True,
+        dhcp_pools=app.dhcp_pools,
+        vlans_data=[], static_routes=[],
+        chk_ospf=False, ospf_pid="1", ospf_networks=[],
+        qos_classes=[], pol_entries=[], pol_name="", service_policies=[],
+    )
+    show_preview(
+        app.root, "DHCP — Pools y exclusiones", cmds,
+        note="Solo aplica en switches L3 (ip routing activo).",
+    )
 
 
 def get_dhcp_options(app) -> list:
