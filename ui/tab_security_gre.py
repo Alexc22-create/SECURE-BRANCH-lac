@@ -29,6 +29,7 @@ from ui.validators import (is_valid_ip, is_valid_mask, is_valid_interface,
                            is_positive_int, is_valid_psk)
 from ui.widgets import (make_frame, make_label, make_entry, make_button,
                         make_labelframe, make_title, make_scrolled_text)
+from ui.preview_window import show_preview
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -125,8 +126,38 @@ def build_tab_security(app, parent):
                 color=BG3).pack(pady=8)
 
 
+def _mask_secret(value: str) -> str:
+    """Enmascara un secreto mostrando solo los primeros 2 caracteres + asteriscos."""
+    if len(value) <= 2:
+        return value
+    return value[:2] + '*' * (len(value) - 2)
+
+
+def _mask_commands_for_preview(cmds: list) -> list:
+    """
+    Devuelve una copia de los comandos con contraseñas y PSKs enmascaradas
+    para la vista previa. Los comandos reales no se modifican.
+    """
+    import re
+    masked = []
+    for cmd in cmds:
+        stripped = cmd.strip()
+        # enable secret <pw>
+        m = re.match(r'^(enable secret\s+)(.+)$', stripped)
+        if m:
+            masked.append(m.group(1) + _mask_secret(m.group(2)))
+            continue
+        # crypto isakmp key <psk> address <ip>
+        m = re.match(r'^(crypto isakmp key\s+)(\S+)(\s+address\s+.+)$', stripped)
+        if m:
+            masked.append(m.group(1) + _mask_secret(m.group(2)) + m.group(3))
+            continue
+        masked.append(cmd)
+    return masked
+
+
 def _preview_security_commands(app):
-    """Valida y muestra en un messagebox los comandos IOS que se generarían."""
+    """Valida campos y muestra en la ventana de vista previa los comandos IOS de seguridad."""
     attempts  = app.sec_login_attempts.get().strip()
     window    = app.sec_login_window.get().strip()
     block_for = app.sec_login_block.get().strip()
@@ -158,10 +189,12 @@ def _preview_security_commands(app):
         block_for     = block_for,
         banner_text   = banner_text,
     )
-    if cmds:
-        messagebox.showinfo("Comandos de seguridad", "\n".join(cmds))
-    else:
-        messagebox.showinfo("Sin comandos", "No hay parámetros de seguridad configurados.")
+    show_preview(
+        app.root, "Seguridad — enable secret, login block-for, banner MOTD",
+        _mask_commands_for_preview(cmds),
+        note="Estos comandos se aplican al final de la ejecución "
+             "para no interrumpir la sesión SSH activa.",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -390,12 +423,14 @@ def _del_gre_tunnel(app):
 
 
 def _preview_gre_commands(app):
-    """Muestra los comandos IOS generados para los túneles en pantalla."""
+    """Muestra en la ventana de vista previa los comandos IOS de GRE over IPsec."""
     cmds = build_gre_ipsec_commands(app.gre_tunnels)
-    if cmds:
-        messagebox.showinfo("Comandos GRE over IPsec", "\n".join(cmds))
-    else:
-        messagebox.showinfo("Sin túneles", "No hay túneles GRE configurados.")
+    show_preview(
+        app.root, "GRE over IPsec — ISAKMP, Crypto Map, Tunnel",
+        _mask_commands_for_preview(cmds),
+        note="Las PSKs y contraseñas están enmascaradas en esta vista previa. "
+             "Los comandos reales enviados al switch usan los valores completos.",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

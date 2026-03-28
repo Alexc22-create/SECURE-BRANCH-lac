@@ -16,6 +16,7 @@ from tkinter import ttk, messagebox
 
 from constants import BG2, BG3, SUCCESS, TEXT, TEXT2, UPLINK_IFACE, DSCP_PRESETS
 from ui.validators import is_valid_ios_name, is_valid_interface, is_positive_int
+from ui.preview_window import show_preview
 from ui.widgets import (
     make_frame, make_label, make_entry, make_button,
     make_listbox, make_labelframe, make_title, make_scrolled_frame,
@@ -171,6 +172,11 @@ def build_tab_qos(app, parent):
                 lambda: _remove_service_policy(app),
                 color="#6e2020").pack(anchor="w")
 
+    # ── Vista previa ──────────────────────────────────────────────────────────
+    make_button(sf, "👁  Ver comandos IOS de QoS",
+                lambda: _preview_qos(app),
+                color=BG2).pack(anchor="w", padx=12, pady=(12, 4))
+
 
 # ── Handlers internos ──────────────────────────────────────────────────────────
 
@@ -305,3 +311,18 @@ def _remove_service_policy(app):
     if sel:
         app.sp_listbox.delete(sel[0])
         app.service_policies.pop(sel[0])
+
+
+def _preview_qos(app):
+    """Muestra la vista previa de los comandos QoS (class-map, policy-map, service-policy)."""
+    from core.command_builder import build_commands
+    cmds = build_commands(
+        is_l3=False, chk_intervlan=False,
+        dhcp_pools=[], vlans_data=[],
+        static_routes=[], chk_ospf=False, ospf_pid="1", ospf_networks=[],
+        qos_classes=app.qos_classes,
+        pol_entries=app.pol_entries,
+        pol_name=app.pol_name.get().strip(),
+        service_policies=app.service_policies,
+    )
+    show_preview(app.root, "QoS — class-map, policy-map, service-policy", cmds)

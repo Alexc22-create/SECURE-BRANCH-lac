@@ -63,6 +63,9 @@ def build_commands(
     pol_entries: list,
     pol_name: str,
     service_policies: list,
+    # ── DNS personalizable ──────────────────────────────────────────────────
+    dns1: str               = "",    # DNS primario (fallback: 8.8.8.8)
+    dns2: str               = "",    # DNS secundario (opcional)
     # ── Nuevos parámetros v2.2 ────────────────────────────────────────────────
     enable_pw: str          = "",    # enable secret (MD5 type-5)
     login_attempts: str     = "",    # máx intentos fallidos antes de bloquear
@@ -89,6 +92,8 @@ def build_commands(
     pol_entries    : Lista de dicts {class, action, value}.
     pol_name       : Nombre de la policy-map.
     service_policies: Lista de dicts {iface, dir, policy}.
+    dns1           : DNS primario para pools DHCP. Vacío = 8.8.8.8 (fallback).
+    dns2           : DNS secundario para pools DHCP. Vacío = omitir.
     enable_pw      : Contraseña para 'enable secret' (MD5 type-5). Vacío = omitir.
     login_attempts : Número de intentos fallidos para activar bloqueo.
     login_window   : Ventana de tiempo (seg) para contar intentos.
@@ -120,11 +125,17 @@ def build_commands(
             cmds.append(f"ip dhcp excluded-address {pool['gw']}")   # excluir gateway
             for excl_ip in pool.get('excludes', []):
                 cmds.append(f"ip dhcp excluded-address {excl_ip}")
+            # DNS: usar los proporcionados por el usuario, o 8.8.8.8 como fallback
+            dns_primary   = dns1.strip() if dns1.strip() else "8.8.8.8"
+            dns_secondary = dns2.strip() if dns2.strip() else ""
+            dns_cmd = f"dns-server {dns_primary}"
+            if dns_secondary:
+                dns_cmd += f" {dns_secondary}"
             cmds += [
                 f"ip dhcp pool {pool['name']}",
                 f"network {pool['net']} {pool['mask']}",
                 f"default-router {pool['gw']}",
-                "dns-server 8.8.8.8",    # DNS público por defecto
+                dns_cmd,
                 "exit"
             ]
 
@@ -184,7 +195,22 @@ def build_commands(
                 ]
             if v['custom_acl']:
                 # Reglas personalizadas ingresadas por el usuario (una por línea)
-                cmds += [r.strip() for r in v['custom_acl'].split('\n') if r.strip()]
+                # Sanitización: solo permitir líneas con prefijos ACL válidos
+                _ACL_VALID_PREFIXES = ('permit', 'deny', 'remark')
+                _ACL_DANGEROUS = (
+                    'exit', 'end', '!', 'do ', 'configure', 'enable',
+                    'username', 'crypto key', 'no crypto', 'line', 'ip http',
+                )
+                for r in v['custom_acl'].split('\n'):
+                    line = r.strip()
+                    if not line:
+                        continue
+                    low = line.lower()
+                    if any(low.startswith(d) for d in _ACL_DANGEROUS):
+                        continue   # rechazar líneas peligrosas
+                    if not any(low.startswith(p) for p in _ACL_VALID_PREFIXES):
+                        continue   # rechazar líneas sin prefijo ACL válido
+                    cmds.append(line)
             cmds += ["permit ip any any", "exit"]   # permitir todo lo demás
 
     # ── 6. SVIs — Switch Virtual Interfaces (solo L3) ─────────────────────────

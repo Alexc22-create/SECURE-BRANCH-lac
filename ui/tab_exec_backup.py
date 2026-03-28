@@ -25,7 +25,8 @@ from datetime import datetime
 from constants import BG, BG2, BG3, ACCENT, SUCCESS, WARN, TEXT, TEXT2, BORDER
 from ui.widgets import (make_frame, make_label, make_entry, make_button,
                         make_scrolled_text, make_title, make_labelframe)
-from core.connector import run_on_switch, fetch_running_config
+from core.connector import run_on_switch, fetch_running_config, restore_running_config
+from ui.preview_window import show_preview
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -47,6 +48,9 @@ def build_tab_exec(app, parent):
     make_button(bf, "🗑  LIMPIAR SWITCH\n    (sin tocar SSH)",
                 lambda: clean_switch(app),
                 color="#6e2020").grid(row=0, column=1, padx=8)
+    make_button(bf, "👁  VER TODOS LOS\n    COMANDOS IOS",
+                lambda: _preview_all_commands(app),
+                color=BG3).grid(row=0, column=2, padx=8)
 
     make_label(parent,
                "Selecciona las sucursales en la pestaña ① antes de aplicar.",
@@ -104,6 +108,9 @@ def _build_config_params(app) -> dict:
         'pol_entries':     app.pol_entries,
         'pol_name':        app.pol_name.get().strip(),
         'service_policies':app.service_policies,
+        # ── DNS configurable ──────────────────────────────────────────────────
+        'dns1':            app.app_config.get('dhcp_dns1', ''),
+        'dns2':            app.app_config.get('dhcp_dns2', ''),
         # ── Seguridad (v2.2) ──────────────────────────────────────────────────
         'enable_pw':       getattr(app, 'sec_enable_pw',      None) and app.sec_enable_pw.get().strip()      or "",
         'login_attempts':  getattr(app, 'sec_login_attempts', None) and app.sec_login_attempts.get().strip() or "",
@@ -159,6 +166,45 @@ def deploy_config(app):
         export_config(app)
 
 
+def _preview_all_commands(app):
+    """
+    Genera y muestra en la ventana de vista previa la totalidad de comandos
+    IOS que se enviarán al switch al pulsar 'Aplicar'.
+    Se asume modo L3 para mostrar el conjunto completo; en switches L2
+    los comandos de DHCP y SVIs se omiten automáticamente al ejecutar.
+    """
+    from core.command_builder import build_commands
+    params = _build_config_params(app)
+    cmds = build_commands(
+        is_l3=True,           # asunción para mostrar el set completo
+        chk_intervlan=params['chk_intervlan'],
+        dhcp_pools=params['dhcp_pools'],
+        vlans_data=params['vlans_data'],
+        static_routes=params['static_routes'],
+        chk_ospf=params['chk_ospf'],
+        ospf_pid=params['ospf_pid'],
+        ospf_networks=params['ospf_networks'],
+        qos_classes=params['qos_classes'],
+        pol_entries=params['pol_entries'],
+        pol_name=params['pol_name'],
+        service_policies=params['service_policies'],
+        enable_pw=params['enable_pw'],
+        login_attempts=params['login_attempts'],
+        login_window=params['login_window'],
+        login_block_for=params['login_block_for'],
+        banner_text=params['banner_text'],
+        gre_tunnels=params['gre_tunnels'],
+    )
+    show_preview(
+        app.root,
+        "Todos los comandos IOS — Vista completa",
+        cmds,
+        note="Previsualización asumiendo switch L3. "
+             "En switches L2 se omiten automáticamente: "
+             "ip routing, DHCP pools y SVIs con IP.",
+    )
+
+
 def clean_switch(app):
     """
     Limpia la configuración de las sucursales seleccionadas
@@ -212,7 +258,9 @@ def build_tab_backup(app, parent):
 
     Secciones:
       1. Exportar / Importar JSON (config de la app, sin credenciales)
-      2. Descargar running-config a archivo .txt local
+      2. Backup/Restauración de Running-Config real del switch (.txt)
+         2a. Descargar running-config del switch a archivo .txt local
+         2b. Restaurar running-config desde archivo .txt al switch
       3. AWS S3 Backup — subir running-config de uno o varios switches a un bucket S3
 
     Widgets creados en 'app':
@@ -237,15 +285,22 @@ def build_tab_backup(app, parent):
     make_button(bf, "📂  Importar .json",
                 lambda: import_config(app), color="#4a3000", fg=TEXT).grid(row=0, column=1, padx=5)
 
-    # ── Sección 2: Running-Config local ───────────────────────────────────────
-    frm_run = make_labelframe(parent, "⬇  Running-Config del Switch  (archivo local .txt)")
+    # ── Sección 2: Backup / Restauración del Running-Config real ──────────────
+    frm_run = make_labelframe(parent, "🔄  Running-Config del Switch  (backup/restauración .txt)")
     frm_run.pack(fill="x", padx=20, pady=5)
     make_label(frm_run,
-               "Descarga 'show running-config' de la sucursal seleccionada y guarda como .txt.",
+               "Descarga o restaura el running-config real del switch como archivo .txt.",
                fg=TEXT2).pack(anchor="w")
-    make_button(frm_run, "⬇  Descargar running-config",
+    make_label(frm_run,
+               "⚠  La restauración envía los comandos del archivo al switch y guarda la config.",
+               fg=WARN).pack(anchor="w")
+    run_bf = make_frame(frm_run); run_bf.pack(anchor="w", pady=4)
+    make_button(run_bf, "⬇  Descargar running-config del SW",
                 lambda: backup_running_config(app),
-                color="#0d2137", fg=TEXT).pack(anchor="w", pady=4)
+                color="#0d2137", fg=TEXT).grid(row=0, column=0, padx=5)
+    make_button(run_bf, "⬆  Restaurar config desde archivo .txt",
+                lambda: restore_running_config_from_file(app),
+                color="#2a1a00", fg=TEXT).grid(row=0, column=1, padx=5)
 
     # ── Sección 3: AWS S3 Backup ──────────────────────────────────────────────
     # El running-config se obtiene vía SSH (Netmiko) y se sube a S3 con boto3.
@@ -491,6 +546,76 @@ def backup_running_config(app):
         messagebox.showinfo("OK", f"Guardado en:\n{fn}")
     except Exception as e:
         messagebox.showerror("Error", str(e))
+
+
+def restore_running_config_from_file(app):
+    """
+    Abre un archivo .txt con un running-config previamente guardado y lo
+    restaura en la sucursal seleccionada vía SSH.
+
+    Flujo:
+      1. Seleccionar archivo .txt con el running-config.
+      2. Mostrar vista previa y pedir confirmación.
+      3. Conectar al switch y enviar los comandos (filtrando cabeceras).
+      4. Guardar config en el switch (write memory).
+    """
+    if not _validate_sucursales(app): return
+    targets = _get_selected_sucursales(app)
+    if not targets: return
+    sw = targets[0]   # restaurar de a una sucursal a la vez
+
+    fn = filedialog.askopenfilename(
+        title="Seleccionar running-config a restaurar",
+        filetypes=[("Text", "*.txt"), ("All", "*.*")],
+    )
+    if not fn: return
+
+    try:
+        with open(fn, 'r', encoding='utf-8', errors='replace') as f:
+            config_text = f.read()
+    except Exception as e:
+        messagebox.showerror("Error al leer archivo", str(e))
+        return
+
+    # Contar líneas de comandos reales (excluyendo vacías y comentarios)
+    cmd_count = sum(
+        1 for l in config_text.splitlines()
+        if l.strip() and l.strip() != '!' and not l.startswith('#')
+        and not l.startswith('Building') and not l.startswith('Current')
+        and not l.startswith('version ')
+    )
+
+    _show_in_preview(app, config_text[:4000] + ("\n...(truncado)..." if len(config_text) > 4000 else ""))
+
+    if not messagebox.askyesno(
+        "Confirmar restauración",
+        f"Archivo: {fn}\n\n"
+        f"Se enviarán ~{cmd_count} comandos al switch:\n"
+        f"  {sw['name']}  ({sw['ip']})\n\n"
+        "La config actual del switch será reemplazada.\n"
+        "¿Continuar?"
+    ):
+        return
+
+    _log(app, "═" * 58)
+    _log(app, f"  RESTAURANDO config en: {sw['name']}  |  {sw['ip']}")
+    _log(app, f"  Archivo: {fn}")
+    _log(app, f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    _log(app, "═" * 58)
+
+    success = restore_running_config(
+        sw, config_text,
+        log_fn=lambda msg: _log(app, msg),
+    )
+
+    _log(app, "═" * 58)
+    if success:
+        messagebox.showinfo("Restauración completada",
+                            f"✔ Config restaurada exitosamente en:\n{sw['name']}  ({sw['ip']})")
+    else:
+        messagebox.showerror("Error en restauración",
+                             f"✘ Ocurrió un error al restaurar la config en:\n{sw['name']}\n\n"
+                             "Revisa el log de la pestaña ⑥ para más detalles.")
 
 
 def _show_in_preview(app, text: str):

@@ -7,6 +7,7 @@ Encapsula toda la lógica de Netmiko:
   - Enviar comandos uno a uno con logging y manejo de errores
   - Aplicar o limpiar configuración en un switch
   - Descargar el running-config (backup)
+  - Restaurar un running-config desde archivo de texto
 
 Este módulo no depende de tkinter; recibe una función de log como parámetro
 para poder usarse tanto desde la GUI como desde scripts de línea de comandos.
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # (en core/ y ui/ sube un nivel con dirname() adicional)
 import re
 import time
+import traceback
 from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoTimeoutException, NetmikoAuthenticationException
 
@@ -209,8 +211,6 @@ def run_on_switch(sw: dict, config_params: dict, do_clean: bool = False, log_fn=
     except Exception as e:
         if log_fn:
             log_fn(f"  ✘ {sw['name']} — Error: {e}")
-        import traceback
-        if log_fn:
             log_fn(traceback.format_exc())
     return False
 
@@ -236,6 +236,110 @@ def fetch_running_config(sw: dict) -> str:
     raw = nc.send_command("show running-config", delay_factor=4)
     nc.disconnect()
     return raw
+
+
+def restore_running_config(sw: dict, config_text: str, log_fn=None) -> bool:
+    """
+    Restaura un running-config desde texto a un switch vía SSH.
+
+    Filtra automáticamente las líneas de cabecera del archivo que no son
+    comandos IOS válidos (Building configuration, version, ntp clock-period,
+    comentarios con !, líneas de backup propias con #, etc.).
+
+    Parámetros
+    ----------
+    sw          : dict con credenciales del switch.
+    config_text : Contenido del archivo .txt con el running-config.
+    log_fn      : Función de log opcional.
+
+    Retorna
+    -------
+    bool : True si la restauración fue exitosa.
+    """
+    # Patrones de líneas que NO son comandos IOS válidos en config mode
+    _SKIP_STARTS = (
+        'Building configuration',
+        'Current configuration',
+        'ntp clock-period',   # auto-generado por IOS, no se puede escribir
+        '#',                  # cabeceras de nuestros propios backups
+    )
+
+    # Comandos peligrosos que pueden comprometer el acceso al dispositivo
+    _DANGEROUS_STARTS = (
+        'username', 'enable password', 'enable secret',
+        'crypto key', 'aaa', 'line vty', 'ip http',
+        'snmp-server community', 'no crypto',
+    )
+
+    cmds = []
+    filtered_count = 0
+    filtered_reasons = []
+    for raw_line in config_text.splitlines():
+        line = raw_line.rstrip()
+        # Saltar vacías, comentarios IOS (!), "end" y cabeceras del archivo
+        if not line or line.lstrip() == '!' or line.strip() == 'end':
+            continue
+        if line.startswith('version '):   # "version 15.x" no es configurable
+            continue
+        if any(line.startswith(p) for p in _SKIP_STARTS):
+            continue
+        # Filtrar comandos peligrosos que pueden comprometer el dispositivo
+        low = line.strip().lower()
+        if any(low.startswith(d) for d in _DANGEROUS_STARTS):
+            filtered_count += 1
+            filtered_reasons.append(line.strip())
+            continue
+        cmds.append(line)
+
+    if filtered_count and log_fn:
+        log_fn(f"  [SEGURIDAD] {filtered_count} líneas filtradas por contener "
+               f"comandos peligrosos:")
+        for reason in filtered_reasons[:10]:
+            log_fn(f"    - {reason[:80]}")
+        if filtered_count > 10:
+            log_fn(f"    ... y {filtered_count - 10} más.")
+
+    if not cmds:
+        if log_fn:
+            log_fn("  ✘ No se encontraron comandos válidos en el archivo.")
+        return False
+
+    if log_fn:
+        log_fn(f"\n{'─'*56}")
+        log_fn(f"  Sucursal: {sw['name']}  |  {sw['ip']}")
+        log_fn(f"{'─'*56}")
+        log_fn(f"  Comandos a enviar: {len(cmds)}")
+
+    try:
+        nc = ConnectHandler(**make_device_params(sw))
+        nc.enable()
+        hostname = nc.find_prompt().replace("#", "").strip()
+        if log_fn:
+            log_fn(f"  ✔ Conectado: '{hostname}'")
+
+        nc.config_mode()
+        time.sleep(0.3)
+        send_cmd_by_cmd(nc, cmds, log_fn)
+        nc.exit_config_mode()
+        time.sleep(0.3)
+
+        nc.save_config()
+        if log_fn:
+            log_fn(f"  ✔ {sw['name']} — RESTAURADO Y GUARDADO EXITOSAMENTE")
+        nc.disconnect()
+        return True
+
+    except NetmikoAuthenticationException:
+        if log_fn:
+            log_fn(f"  ✘ {sw['name']} — Error de Autenticación")
+    except NetmikoTimeoutException:
+        if log_fn:
+            log_fn(f"  ✘ {sw['name']} — Timeout")
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ✘ {sw['name']} — Error: {e}")
+            log_fn(traceback.format_exc())
+    return False
 
 
 def test_connection(sw: dict):
