@@ -262,6 +262,10 @@ def _add_excl_ip(app):
     ip = app.dhcp_excl_entry.get().strip()
     if not ip:
         return
+    if not is_valid_ip(ip):
+        messagebox.showerror("IP inválida",
+            f"'{ip}' no es una dirección IPv4 válida.\nEjemplo: 192.168.10.100")
+        return
     if ip in app.dhcp_excl_pending:
         messagebox.showwarning("Duplicado", f"La IP {ip} ya está en la lista.")
         return
@@ -320,17 +324,6 @@ def _add_dhcp(app):
         getattr(app, f"dhcp_{k}").delete(0, tk.END)
     app.dhcp_excl_pending.clear()
     app.dhcp_excl_listbox.delete(0, tk.END)
-    if any(p['name'] == pool['name'] for p in app.dhcp_pools):
-        messagebox.showwarning("Duplicado",
-            f"Ya existe un pool DHCP con el nombre '{pool['name']}'.")
-        return
-    app.dhcp_pools.append(pool)
-    app.dhcp_listbox.insert(
-        tk.END,
-        f"  {pool['name']:18} {pool['net']:18} {pool['mask']:18} GW:{pool['gw']}"
-    )
-    for k in ('name', 'net', 'mask', 'gw'):
-        getattr(app, f"dhcp_{k}").delete(0, tk.END)
 
 
 def _remove_dhcp(app):
@@ -350,6 +343,8 @@ def _preview_dhcp(app):
         vlans_data=[], static_routes=[],
         chk_ospf=False, ospf_pid="1", ospf_networks=[],
         qos_classes=[], pol_entries=[], pol_name="", service_policies=[],
+        dns1=app.app_config.get('dhcp_dns1', ''),
+        dns2=app.app_config.get('dhcp_dns2', ''),
     )
     show_preview(
         app.root, "DHCP — Pools y exclusiones", cmds,

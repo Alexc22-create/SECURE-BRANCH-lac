@@ -10,7 +10,7 @@ CÓMO EJECUTAR:
 
 Estructura de módulos:
   app.py                      ← Este archivo: clase principal + punto de entrada
-  constants.py                ← Colores, versión, UPLINK_IFACE, DSCP_PRESETS
+  constants.py                ← Colores, versión, UPLINK_IFACE, DSCP_PRESETS, THEMES
   core/
     command_builder.py        ← Generación de comandos IOS (sin GUI)
     connector.py              ← Conexión SSH, detección L2/L3, envío de comandos
@@ -22,6 +22,7 @@ Estructura de módulos:
     tab_qos.py                ← Pestaña ⑤ QoS MQC
     tab_exec_backup.py        ← Pestañas ⑥ Ejecución y ⑦ Backup (incluye AWS S3)
     tab_security_gre.py       ← Pestañas ⑧ Seguridad y ⑨ GRE over IPsec
+    tab_config.py             ← Pestaña ⑩ Configuración de Empresa y Estilos
 """
 
 import sys
@@ -35,13 +36,14 @@ import tkinter as tk
 from tkinter import ttk
 
 from constants import APP_VERSION
-from ui.widgets import apply_style
+from ui.widgets import apply_style, switch_theme
 from ui.tabs_sw_dhcp    import build_tab_sw, build_tab_dhcp
 from ui.tab_vlan        import build_tab_vlan
 from ui.tab_routing     import build_tab_routing
 from ui.tab_qos         import build_tab_qos
 from ui.tab_exec_backup import build_tab_exec, build_tab_backup
 from ui.tab_security_gre import build_tab_security, build_tab_gre
+from ui.tab_config      import build_tab_config, load_config, _apply_defaults_to_tabs
 
 
 class SwitchConfiguratorV2:
@@ -67,6 +69,9 @@ class SwitchConfiguratorV2:
         self.root.geometry("980x800")
         self.root.configure(bg="#0d1117")
         self.root.resizable(True, True)
+
+        # Cargar configuración persistente antes de construir los widgets
+        self.app_config = load_config()
 
         # Aplicar tema visual global (colores, fuentes, bordes)
         apply_style(root)
@@ -99,6 +104,7 @@ class SwitchConfiguratorV2:
             ("tab_backup",   "⑦ Backup"),
             ("tab_security", "⑧ Seguridad"),
             ("tab_gre",      "⑨ GRE/IPsec"),
+            ("tab_config",   "⚙ Configuración"),
         ]
         for attr, label in tabs:
             frame = ttk.Frame(nb)
@@ -117,6 +123,21 @@ class SwitchConfiguratorV2:
         build_tab_backup(self,   self.tab_backup)
         build_tab_security(self, self.tab_security)
         build_tab_gre(self,      self.tab_gre)
+        build_tab_config(self,   self.tab_config)
+
+        # ── Aplicar configuración guardada al arranque ─────────────────────────
+        # 1. Pre-rellenar campos vacíos de otras pestañas con defaults guardados.
+        _apply_defaults_to_tabs(self, silent=True)
+
+        # 2. Aplicar el tema guardado (si no es el default ya aplicado).
+        saved_theme = self.app_config.get('theme', 'github_dark')
+        if saved_theme != 'github_dark':
+            switch_theme(root, saved_theme, self)
+
+        # 3. Actualizar título con nombre de empresa (si hay uno guardado).
+        empresa = self.app_config.get('empresa', '')
+        if empresa:
+            self.root.title(f"Configurador IOSvL2 — {APP_VERSION}  |  {empresa}")
 
 
 # ── Punto de entrada ───────────────────────────────────────────────────────────

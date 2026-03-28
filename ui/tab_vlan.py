@@ -247,6 +247,8 @@ def _preview_vlans(app):
         vlans_data=app.vlans_data,
         static_routes=[], chk_ospf=False, ospf_pid="1", ospf_networks=[],
         qos_classes=[], pol_entries=[], pol_name="", service_policies=[],
+        dns1=app.app_config.get('dhcp_dns1', ''),
+        dns2=app.app_config.get('dhcp_dns2', ''),
     )
     show_preview(
         app.root, "VLANs, Puertos, ACLs y SVIs", cmds,

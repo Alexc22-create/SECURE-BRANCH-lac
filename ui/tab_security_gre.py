@@ -126,6 +126,36 @@ def build_tab_security(app, parent):
                 color=BG3).pack(pady=8)
 
 
+def _mask_secret(value: str) -> str:
+    """Enmascara un secreto mostrando solo los primeros 2 caracteres + asteriscos."""
+    if len(value) <= 2:
+        return value
+    return value[:2] + '*' * (len(value) - 2)
+
+
+def _mask_commands_for_preview(cmds: list) -> list:
+    """
+    Devuelve una copia de los comandos con contraseñas y PSKs enmascaradas
+    para la vista previa. Los comandos reales no se modifican.
+    """
+    import re
+    masked = []
+    for cmd in cmds:
+        stripped = cmd.strip()
+        # enable secret <pw>
+        m = re.match(r'^(enable secret\s+)(.+)$', stripped)
+        if m:
+            masked.append(m.group(1) + _mask_secret(m.group(2)))
+            continue
+        # crypto isakmp key <psk> address <ip>
+        m = re.match(r'^(crypto isakmp key\s+)(\S+)(\s+address\s+.+)$', stripped)
+        if m:
+            masked.append(m.group(1) + _mask_secret(m.group(2)) + m.group(3))
+            continue
+        masked.append(cmd)
+    return masked
+
+
 def _preview_security_commands(app):
     """Valida campos y muestra en la ventana de vista previa los comandos IOS de seguridad."""
     attempts  = app.sec_login_attempts.get().strip()
@@ -160,7 +190,8 @@ def _preview_security_commands(app):
         banner_text   = banner_text,
     )
     show_preview(
-        app.root, "Seguridad — enable secret, login block-for, banner MOTD", cmds,
+        app.root, "Seguridad — enable secret, login block-for, banner MOTD",
+        _mask_commands_for_preview(cmds),
         note="Estos comandos se aplican al final de la ejecución "
              "para no interrumpir la sesión SSH activa.",
     )
@@ -395,9 +426,10 @@ def _preview_gre_commands(app):
     """Muestra en la ventana de vista previa los comandos IOS de GRE over IPsec."""
     cmds = build_gre_ipsec_commands(app.gre_tunnels)
     show_preview(
-        app.root, "GRE over IPsec — ISAKMP, Crypto Map, Tunnel", cmds,
-        note="Las PSKs aparecen en texto plano aquí. "
-             "No compartas esta vista previa.",
+        app.root, "GRE over IPsec — ISAKMP, Crypto Map, Tunnel",
+        _mask_commands_for_preview(cmds),
+        note="Las PSKs y contraseñas están enmascaradas en esta vista previa. "
+             "Los comandos reales enviados al switch usan los valores completos.",
     )
 
 

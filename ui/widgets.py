@@ -17,6 +17,131 @@ from constants import (
 )
 
 
+# ── Soporte de temas (theme switching) ────────────────────────────────────────
+
+def _build_role_map():
+    """Construye un mapa hex→rol a partir de todos los temas disponibles."""
+    from constants import THEMES
+    role_map = {}
+    for theme in THEMES.values():
+        for role, val in theme.items():
+            if isinstance(val, str) and val.startswith('#'):
+                role_map[val.lower()] = role
+    return role_map
+
+
+def switch_theme(root, theme_key: str, app):
+    """
+    Aplica un tema visual en tiempo real a toda la aplicación.
+
+    1. Actualiza las variables del módulo constants (para nuevos widgets).
+    2. Re-aplica los estilos ttk.
+    3. Recorre el árbol de widgets y remapea colores.
+    4. Persiste el tema en app_config.json.
+    """
+    import constants
+    from constants import THEMES
+
+    if theme_key not in THEMES:
+        return
+
+    theme = THEMES[theme_key]
+    role_map = _build_role_map()
+
+    # Actualizar globals del módulo constants
+    for role in ('BG', 'BG2', 'BG3', 'ACCENT', 'ACCENT2',
+                 'SUCCESS', 'WARN', 'TEXT', 'TEXT2', 'BORDER'):
+        if role in theme:
+            setattr(constants, role, theme[role])
+
+    # Re-aplicar estilos ttk con los nuevos colores
+    apply_style(root)
+
+    # Actualizar fondo de la ventana raíz
+    root.configure(bg=theme['BG'])
+
+    # Recorrer árbol de widgets
+    _apply_theme_to_widget(root, theme, role_map)
+
+    # Guardar preferencia de tema
+    app.app_config['theme'] = theme_key
+    try:
+        import json
+        config_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "app_config.json"
+        )
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(app.app_config, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[widgets] Error guardando preferencia de tema: {e}")
+
+
+def _apply_theme_to_widget(widget, theme: dict, role_map: dict):
+    """Recorre recursivamente el árbol de widgets y remapea colores al nuevo tema."""
+
+    def remap(color: str) -> str:
+        """Devuelve el color equivalente en el nuevo tema, o el mismo si no está mapeado."""
+        if not color or not color.startswith('#'):
+            return color
+        role = role_map.get(color.lower())
+        return theme.get(role, color) if role else color
+
+    wclass = widget.winfo_class()
+
+    try:
+        if wclass == 'Frame':
+            widget.configure(bg=remap(widget.cget('bg')))
+
+        elif wclass == 'Label':
+            widget.configure(
+                bg=remap(widget.cget('bg')),
+                fg=remap(widget.cget('fg')),
+            )
+
+        elif wclass == 'Button':
+            widget.configure(
+                bg=remap(widget.cget('bg')),
+                fg=remap(widget.cget('fg')),
+                activebackground=remap(widget.cget('activebackground')),
+                activeforeground=remap(widget.cget('activeforeground')),
+            )
+
+        elif wclass == 'Entry':
+            widget.configure(
+                bg=remap(widget.cget('bg')),
+                fg=remap(widget.cget('fg')),
+                insertbackground=remap(widget.cget('insertbackground')),
+                highlightcolor=remap(widget.cget('highlightcolor')),
+                highlightbackground=remap(widget.cget('highlightbackground')),
+            )
+
+        elif wclass == 'Listbox':
+            widget.configure(
+                bg=remap(widget.cget('bg')),
+                fg=remap(widget.cget('fg')),
+                selectbackground=remap(widget.cget('selectbackground')),
+                highlightbackground=remap(widget.cget('highlightbackground')),
+            )
+
+        elif wclass == 'Text':
+            widget.configure(
+                bg=remap(widget.cget('bg')),
+                fg=remap(widget.cget('fg')),
+                insertbackground=remap(widget.cget('insertbackground')),
+                highlightbackground=remap(widget.cget('highlightbackground')),
+            )
+
+        elif wclass == 'Canvas':
+            widget.configure(bg=remap(widget.cget('bg')))
+
+    except Exception as e:
+        print(f"[widgets] Error aplicando tema a {wclass}: {e}")
+
+    for child in widget.winfo_children():
+        _apply_theme_to_widget(child, theme, role_map)
+
+
 def apply_style(root):
     """
     Configura el tema ttk global de la aplicación.
@@ -171,5 +296,9 @@ def make_scrolled_frame(parent):
     def _on_mousewheel(event):
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
     canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    # Bindings adicionales para Linux (X11 usa Button-4/5 en lugar de MouseWheel)
+    canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+    canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
 
     return inner_frame
