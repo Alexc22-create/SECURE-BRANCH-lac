@@ -8,7 +8,7 @@ Pestaña ⑦: Exportar/importar config como JSON, descargar running-config
 
 AWS S3 Backup:
   Requiere boto3 instalado: pip install boto3 --break-system-packages
-  Credenciales configuradas en la pestaña ⑦ (Access Key + Secret Key + Region + Bucket).
+  Credenciales configuradas en la pestaña ⑦ (Access Key + Secret Key + Session Token + Region + Bucket).
   El running-config se sube como objeto S3 con clave:
     backups/<hostname>/<YYYY-MM-DD_HH-MM-SS>.txt
 """
@@ -267,6 +267,7 @@ def build_tab_backup(app, parent):
       app.backup_preview   : ScrolledText — vista previa del JSON / running-config
       app.s3_access_key    : Entry — AWS Access Key ID
       app.s3_secret_key    : Entry — AWS Secret Access Key
+      app.s3_session_token : Entry — AWS Session Token (opcional, para credenciales temporales)
       app.s3_region        : Entry — Región AWS (ej. us-east-1)
       app.s3_bucket        : Entry — Nombre del bucket S3
       app.s3_prefix        : Entry — Prefijo/carpeta dentro del bucket (ej. backups/)
@@ -326,25 +327,30 @@ def build_tab_backup(app, parent):
     app.s3_secret_key = make_entry(cred_grid, width=34, show="*")
     app.s3_secret_key.grid(row=0, column=3, padx=4)
 
-    # Fila 1: Region + Bucket + Prefijo
-    make_label(cred_grid, "Región AWS:",        width=18).grid(row=1, column=0, sticky="w", pady=2)
+    # Fila 1: Session Token (credenciales temporales AWS Academy / Vocareum)
+    make_label(cred_grid, "Session Token:",     width=18).grid(row=1, column=0, sticky="w", pady=2)
+    app.s3_session_token = make_entry(cred_grid, width=60, show="*")
+    app.s3_session_token.grid(row=1, column=1, columnspan=3, padx=4, sticky="w")
+
+    # Fila 2: Region + Bucket + Prefijo
+    make_label(cred_grid, "Región AWS:",        width=18).grid(row=2, column=0, sticky="w", pady=2)
     app.s3_region = make_entry(cred_grid, width=16)
     app.s3_region.insert(0, "us-east-1")
-    app.s3_region.grid(row=1, column=1, padx=4, sticky="w")
+    app.s3_region.grid(row=2, column=1, padx=4, sticky="w")
 
-    make_label(cred_grid, "Bucket S3:",         width=18).grid(row=1, column=2, sticky="w")
+    make_label(cred_grid, "Bucket S3:",         width=18).grid(row=2, column=2, sticky="w")
     app.s3_bucket = make_entry(cred_grid, width=24)
     app.s3_bucket.insert(0, "mi-bucket-backups")
-    app.s3_bucket.grid(row=1, column=3, padx=4, sticky="w")
+    app.s3_bucket.grid(row=2, column=3, padx=4, sticky="w")
 
-    make_label(cred_grid, "Prefijo/carpeta:",   width=18).grid(row=2, column=0, sticky="w", pady=2)
+    make_label(cred_grid, "Prefijo/carpeta:",   width=18).grid(row=3, column=0, sticky="w", pady=2)
     app.s3_prefix = make_entry(cred_grid, width=24)
     app.s3_prefix.insert(0, "backups/switches/")
-    app.s3_prefix.grid(row=2, column=1, padx=4, sticky="w")
+    app.s3_prefix.grid(row=3, column=1, padx=4, sticky="w")
 
     make_label(cred_grid,
                "→  Ruta en S3: <prefijo>/<hostname>/<fecha>.txt",
-               fg=TEXT2).grid(row=2, column=2, columnspan=2, sticky="w")
+               fg=TEXT2).grid(row=3, column=2, columnspan=2, sticky="w")
 
     # Botones S3
     s3_bf = make_frame(frm_s3); s3_bf.pack(anchor="w", pady=6)
@@ -651,10 +657,11 @@ def _get_s3_client(app):
             "  pip install boto3 --break-system-packages"
         )
 
-    access_key = app.s3_access_key.get().strip()
-    secret_key = app.s3_secret_key.get().strip()
-    region     = app.s3_region.get().strip()
-    bucket     = app.s3_bucket.get().strip()
+    access_key    = app.s3_access_key.get().strip()
+    secret_key    = app.s3_secret_key.get().strip()
+    session_token = app.s3_session_token.get().strip()
+    region        = app.s3_region.get().strip()
+    bucket        = app.s3_bucket.get().strip()
 
     if not all([access_key, secret_key, region, bucket]):
         raise ValueError(
@@ -663,12 +670,17 @@ def _get_s3_client(app):
         )
 
     # Crear cliente con credenciales explícitas (no usa el perfil ~/.aws/credentials)
-    client = boto3.client(
-        "s3",
-        region_name          = region,
-        aws_access_key_id    = access_key,
+    # Si hay session token (AWS Academy / Vocareum), se pasa; si no, se omite
+    # para mantener compatibilidad con credenciales permanentes IAM.
+    client_kwargs = dict(
+        region_name           = region,
+        aws_access_key_id     = access_key,
         aws_secret_access_key = secret_key,
     )
+    if session_token:
+        client_kwargs["aws_session_token"] = session_token
+
+    client = boto3.client("s3", **client_kwargs)
     return client, bucket
 
 
